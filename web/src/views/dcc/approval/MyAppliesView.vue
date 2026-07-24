@@ -47,7 +47,7 @@ export default defineComponent({
             <el-table-column label="操作" width="72" fixed="right" align="center" class-name="ops-col" label-class-name="ops-col">
               <template #default="{ row }">
                 <div class="ops-cell">
-                <button class="link-btn" @click="row.status==='IN_APPROVAL' ? openApprove({id: row.id, applyId: row.id, docNo: row.docNo, title: row.title, fileLevel: row.fileLevel, productType: row.productType, applicant: row.applicant+' / '+row.dept, node:'文控审核（终审）', time: row.submittedAt}) : toast('查看详情（演示）')">详情</button>
+                <button class="link-btn" @click="openApplyDetail(row)">详情</button>
                 </div>
               </template>
             </el-table-column>
