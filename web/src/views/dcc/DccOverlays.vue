@@ -533,7 +533,12 @@ export default defineComponent({
       </div>
       <div class="form-item" v-if="applyMode!=='OBSOLETE'">
         <label><span class="req">*</span>确切生效日</label>
-        <el-input v-model="createForm.plannedEffectiveDate" placeholder="YYYY-MM-DD，缺失不可生效" />
+        <el-input
+          v-model="createForm.plannedEffectiveDate"
+          placeholder="必须 YYYY-MM-DD，如 2026-08-01"
+          maxlength="10"
+        />
+        <div style="font-size:12px;color:#909399;margin-top:4px;">仅接受格式 YYYY-MM-DD；不符则无法提交。未到该日申请显示「待生效」，到日才「已发布」。</div>
       </div>
       <div class="form-item" v-if="applyMode!=='OBSOLETE'">
         <label>复审周期(月)</label>

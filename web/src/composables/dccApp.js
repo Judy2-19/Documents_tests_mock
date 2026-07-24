@@ -1779,6 +1779,30 @@ export function createDccSetup() {
       toast(`新版已生效：${msg}；已生成变更单 ${changeNo}，纸质待回收为旧版 ${oldVer}`);
     };
 
+    /** 确切生效日格式：YYYY-MM-DD（含合法日历日） */
+    const isExactYmd = (s) => {
+      const v = String(s || "").trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+      const y = Number(v.slice(0, 4));
+      const m = Number(v.slice(5, 7));
+      const d = Number(v.slice(8, 10));
+      if (m < 1 || m > 12 || d < 1 || d > 31) return false;
+      const dt = new Date(y, m - 1, d);
+      return dt.getFullYear() === y && dt.getMonth() === m - 1 && dt.getDate() === d;
+    };
+
+    const syncApplyPublishedOnActivate = (doc) => {
+      if (!doc) return;
+      (data.applies || []).forEach((a) => {
+        if (a.type !== "CREATE" && a.type !== "REVISE") return;
+        if (a.status !== "APPROVED_PENDING" && a.status !== "APPROVED") return;
+        const sameFile =
+          (a.fileId != null && (a.fileId === doc.fileId || a.fileId === doc.id)) ||
+          (a.docNo === doc.docNo && String(a.targetVersion || "") === String(doc.version || ""));
+        if (sameFile) a.status = "PUBLISHED";
+      });
+    };
+
     const activatePendingDoc = (doc) => {
       if (!doc || doc.status !== "APPROVED_PENDING") return;
       const today = demoToday();
@@ -1790,6 +1814,7 @@ export function createDccSetup() {
         );
         onReviseActivated(doc, oldDoc);
       }
+      syncApplyPublishedOnActivate(doc);
     };
 
     /** 扫描待生效：到达计划生效日 → 现行有效（文控方可分发） */
@@ -1806,7 +1831,14 @@ export function createDccSetup() {
     const finalizeDocApply = (apply) => {
       if (!apply) return;
       const today = demoToday();
-      const planned = apply.plannedEffectiveDate || today;
+      const planned = apply.plannedEffectiveDate || "";
+      // 新建/修订必须有合法确切生效日；未到日则申请为「待生效」，到日才「已发布」
+      if (apply.type === "CREATE" || apply.type === "REVISE") {
+        if (!isExactYmd(planned)) {
+          warn("确切生效日须为 YYYY-MM-DD（如 2026-08-01），无法落库");
+          return;
+        }
+      }
       if (apply.type === "CREATE") {
         let doc = data.documents.find((d) => d.docNo === apply.docNo && d.status !== "SUPERSEDED" && d.status !== "OBSOLETE");
         const fid = apply.fileId != null ? apply.fileId : nextFileId();
@@ -1839,8 +1871,12 @@ export function createDccSetup() {
           doc.effectiveDate = planned;
           doc.fileId = doc.fileId != null ? doc.fileId : fid;
         }
-        apply.status = "PUBLISHED";
-        if (String(planned) <= today) activatePendingDoc(doc);
+        if (String(planned) <= today) {
+          activatePendingDoc(doc);
+          apply.status = "PUBLISHED";
+        } else {
+          apply.status = "APPROVED_PENDING";
+        }
       } else if (apply.type === "REVISE") {
         const oldDoc =
           data.documents.find((d) => d.docNo === apply.docNo && d.status === "EFFECTIVE") ||
@@ -1875,8 +1911,12 @@ export function createDccSetup() {
           // 生效日前旧版仍现行；新版待生效仅文控可见
         }
         apply.fileId = newFid;
-        apply.status = "PUBLISHED";
-        if (String(planned) <= today) activatePendingDoc(newDoc);
+        if (String(planned) <= today) {
+          activatePendingDoc(newDoc);
+          apply.status = "PUBLISHED";
+        } else {
+          apply.status = "APPROVED_PENDING";
+        }
       } else if (apply.type === "OBSOLETE") {
         const doc =
           data.documents.find((d) => d.docNo === apply.docNo && d.status === "EFFECTIVE") ||
@@ -2342,14 +2382,24 @@ export function createDccSetup() {
         if (!csvSplit(createForm.productType).length) return warn("请至少选择一个业务领域");
         if (!csvSplit(createForm.ownerDept).length) return warn("请至少选择一个所属部门");
         if (!createForm.reason.trim() || createForm.reason.trim().length < 10) return warn("编制原因必填（至少 10 字）");
-        if (!createForm.plannedEffectiveDate) return warn("必须填写确切计划生效日");
+        if (!createForm.plannedEffectiveDate || !String(createForm.plannedEffectiveDate).trim()) {
+          return warn("必须填写确切生效日");
+        }
+        if (!isExactYmd(createForm.plannedEffectiveDate)) {
+          return warn("确切生效日格式必须为 YYYY-MM-DD（如 2026-08-01），当前格式不正确，无法提交");
+        }
       }
       if (applyMode.value === "REVISE") {
         createForm.baseDocNo = createForm.docNo;
         if (!csvSplit(createForm.productType).length) return warn("请至少选择一个业务领域");
         if (!csvSplit(createForm.ownerDept).length) return warn("请至少选择一个所属部门");
         if (!createForm.changeSummary.trim() || createForm.changeSummary.trim().length < 10) return warn("变更原因必填（至少 10 字，禁止空泛填写）");
-        if (!createForm.plannedEffectiveDate) return warn("修订必须填写新版确切生效日");
+        if (!createForm.plannedEffectiveDate || !String(createForm.plannedEffectiveDate).trim()) {
+          return warn("修订必须填写新版确切生效日");
+        }
+        if (!isExactYmd(createForm.plannedEffectiveDate)) {
+          return warn("确切生效日格式必须为 YYYY-MM-DD（如 2026-08-01），当前格式不正确，无法提交");
+        }
       }
       if (applyMode.value === "OBSOLETE") {
         createForm.baseDocNo = createForm.docNo;
@@ -2433,7 +2483,13 @@ export function createDccSetup() {
         syncRoleStats();
         applyDrawer.value = false;
         navigate("applies");
-        toast(`文控已直接办理${typeLabel}（${applyNo}），无需审批`);
+        const ped = applyRow.plannedEffectiveDate || "";
+        const pendingTip =
+          (applyMode.value === "CREATE" || applyMode.value === "REVISE") &&
+          applyRow.status === "APPROVED_PENDING"
+            ? `；计划生效日 ${ped} 未到，申请为「待生效」，到日后方为「已发布」`
+            : "";
+        toast(`文控已直接办理${typeLabel}（${applyNo}），无需审批` + pendingTip);
         return;
       }
 
