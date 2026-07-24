@@ -1,0 +1,1608 @@
+<!DOCTYPE html>
+<!--
+  【备用】CDN 单页原型入口（日常请用 web/）。
+  引入 Vue3 + Element Plus CDN，模板与 web/src/App.vue 基本同构；
+  逻辑在 assets/js/app.js，数据在 assets/js/data.js。
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>米格实验室 - DCC文控系统（原型）</title>
+  <link rel="stylesheet" href="https://registry.npmmirror.com/element-plus/2.9.0/files/dist/index.css" />
+  <link rel="stylesheet" href="./assets/css/layout.css" />
+</head>
+<body>
+  <div id="app" class="layout">
+    <!-- Aside -->
+    <aside class="aside">
+      <div class="brand" @click="navigate('dashboard')">
+        <div class="brand-mark">DCC</div>
+        <div>
+          <div class="brand-text">米格实验室</div>
+          <span class="brand-sub">DCC 文控系统 · 原型</span>
+        </div>
+      </div>
+      <div class="aside-scroll">
+        <template v-for="g in menus" :key="g.group">
+          <div class="menu-group-title">{{ g.group }}</div>
+          <div
+            v-for="item in g.items"
+            :key="item.key"
+            class="menu-item"
+            :class="{ active: route === item.key }"
+            @click="navigate(item.key)"
+          >
+            <span class="mi">{{ item.icon }}</span>
+            <span>{{ item.label }}</span>
+            <span v-if="item.badge && badgeCount(item.badge)" class="badge">{{ badgeCount(item.badge) }}</span>
+          </div>
+        </template>
+      </div>
+    </aside>
+
+    <!-- Main -->
+    <div class="main-wrap">
+      <header class="topbar">
+        <div class="topbar-left">
+          <div class="crumb">
+            DCC文控系统 / <strong>{{ PAGE_TITLES[route] || '工作台' }}</strong>
+          </div>
+        </div>
+        <div class="topbar-right">
+          <span class="pill">原型 P2 · 需求 V1.5.3</span>
+          <el-select v-model="roleCode" size="small" style="width:148px" @change="switchRole">
+            <el-option v-for="r in data.demoRoles" :key="r.roleCode" :label="r.role" :value="r.roleCode"></el-option>
+          </el-select>
+          <span>{{ data.user.dept }} · {{ data.user.post }}</span>
+          <div class="avatar">{{ data.user.short }}</div>
+          <span>{{ data.user.name }}</span>
+        </div>
+      </header>
+
+      <div class="tabs-bar">
+        <div
+          v-for="t in openTabs"
+          :key="t.key"
+          class="tab-chip"
+          :class="{ active: route === t.key }"
+          @click="navigate(t.key)"
+        >
+          {{ t.title }}
+          <span class="x" @click="closeTab(t.key, $event)">×</span>
+        </div>
+      </div>
+
+      <main class="content">
+        <!-- ========== Dashboard ========== -->
+        <template v-if="route === 'dashboard'">
+          <div class="stat-grid" style="grid-template-columns:repeat(4,1fr);">
+            <div class="stat-card primary"><div class="label">现行有效</div><div class="value">{{ roleStats.effective }}</div><div class="hint">可见 {{ roleStats.totalDocs }} 份 · {{ data.user.dept }}</div></div>
+            <div class="stat-card"><div class="label">本月新建 / 修订</div><div class="value">{{ roleStats.monthNew }} / {{ roleStats.monthRevise }}</div><div class="hint">近 7 日可见范围</div></div>
+            <div class="stat-card danger"><div class="label">待我审批</div><div class="value">{{ roleStats.todoApprove }}</div><div class="hint">含电子签名</div></div>
+            <div class="stat-card warn"><div class="label">待签收 / 回收</div><div class="value">{{ roleStats.todoReceipt }} / {{ roleStats.hardRecycle }}</div><div class="hint">分发与纸质</div></div>
+            <div class="stat-card warn"><div class="label">超期未复审</div><div class="value">{{ roleStats.reviewOverdue }}</div><div class="hint">复审任务</div></div>
+            <div class="stat-card danger"><div class="label">培训待办</div><div class="value">{{ roleStats.todoTrain }}</div><div class="hint">生效联动</div></div>
+            <div class="stat-card"><div class="label">打印下载申请</div><div class="value">{{ roleStats.todoAccess }}</div><div class="hint">二次申请中</div></div>
+            <div class="stat-card primary"><div class="label">当前数据域</div><div class="value" style="font-size:18px;">{{ statusTag(currentRole.domain).text }}</div><div class="hint">{{ data.user.role }} · 受控 {{ roleMyDocs.length }}</div></div>
+          </div>
+
+          <div class="two-col">
+            <div class="page-card">
+              <div class="section-title">
+                <span>我的待办审批</span>
+                <el-button link type="primary" @click="navigate('todoApprove')">查看全部</el-button>
+              </div>
+              <el-empty v-if="!roleTodos.length" description="当前角色暂无待办" :image-size="64"></el-empty>
+              <el-table v-if="roleTodos.length" :data="roleTodos" size="small" stripe style="width:100%">
+                <el-table-column label="文件编号" width="150"><template #default="{ row }">{{ row.docNo }}</template></el-table-column>
+                <el-table-column label="文件名称" min-width="160"><template #default="{ row }">{{ row.title || '-' }}<span v-if="isSecret(row)" class="sec-mi" title="机密">密</span></template></el-table-column>
+                <el-table-column label="文件级别" width="100"><template #default="{ row }">{{ ptName(row.productType) }}</template></el-table-column>
+                <el-table-column label="当前环节" width="120"><template #default="{ row }">{{ row.node }}</template></el-table-column>
+                <el-table-column label="操作" width="90">
+                  <template #default="{ row }">
+                    <button class="link-btn" @click="openApprove(row)">去处理</button>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </div>
+            <div class="page-card">
+              <div class="section-title">
+                <span>近 7 日生效文件（本角色可见）</span>
+                <el-button link type="primary" @click="navigate('docs')">打开台账</el-button>
+              </div>
+              <el-empty v-if="!roleRecentEffective.length" description="当前角色范围内暂无近 7 日生效文件" :image-size="48"></el-empty>
+              <el-table v-if="roleRecentEffective.length" :data="roleRecentEffective" size="small" stripe>
+                <el-table-column label="文件编号" width="150"><template #default="{ row }">{{ row.docNo || '-' }}</template></el-table-column>
+                <el-table-column label="文件名称" min-width="140"><template #default="{ row }">{{ row.title || '-' }}<span v-if="isSecret(row)" class="sec-mi" title="机密">密</span></template></el-table-column>
+                <el-table-column label="文件级别" width="90"><template #default="{ row }">{{ ptName(row.productType) }}</template></el-table-column>
+                <el-table-column label="生效日" width="100"><template #default="{ row }">{{ row.effectiveDate || '-' }}</template></el-table-column>
+                <el-table-column label="版本" width="70"><template #default="{ row }">{{ row.version || '-' }}</template></el-table-column>
+              </el-table>
+              <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:14px;">
+                <el-button type="primary" @click="navigate('applyCreate')">新建申请</el-button>
+                <el-button @click="navigate('trainings')">培训待办（{{ roleStats.todoTrain }}）</el-button>
+                <el-button @click="navigate('accessApplies')">打印下载申请</el-button>
+                <el-button v-if="hasPerm('dcc:audit:export')" @click="navigate('complianceExport')">一键合规导出</el-button>
+                <el-button @click="navigate('myDocs')">我的受控文件（{{ roleMyDocs.length }}）</el-button>
+                <el-button @click="navigate('docs')">编号/全文检索</el-button>
+              </div>
+            </div>
+          </div>
+        </template>
+
+        <!-- ========== Documents（台账=业务操作；综合查询=只读检索，二者共用筛选） ========== -->
+        <template v-else-if="route === 'docs' || route === 'reportDocs'">
+          <div class="page-card">
+            <el-alert
+              :type="route === 'reportDocs' ? 'success' : 'info'"
+              show-icon
+              :closable="false"
+              style="margin-bottom:12px;"
+              :title="route === 'reportDocs'
+                ? '综合查询（只读）：用于审计/快速检索，不提供新建与受控打印；需要办理请到「受控文件台账」。'
+                : '受控文件台账：一级/二级不可网页改正文；三级表单可在线编辑。本部门非密文件可直接下载/打印，机密须二次申请。'"
+            ></el-alert>
+            <div class="filter-row">
+              <div class="filter-item">
+                <label>文件编号</label>
+                <el-input v-model="filters.docNo" placeholder="如 MG-SOP-2026" clearable style="width:180px" />
+              </div>
+              <div class="filter-item">
+                <label>文件名称</label>
+                <el-input v-model="filters.keyword" placeholder="文件名称/责任人/全文" clearable style="width:200px" />
+              </div>
+              <div class="filter-item">
+                <label>文件级别</label>
+                <el-select v-model="filters.productType" clearable placeholder="全部" style="width:150px">
+                  <el-option v-for="p in data.productTypes" :key="p.code" :label="p.name" :value="p.code"></el-option>
+                </el-select>
+              </div>
+              <div class="filter-item">
+                <label>所属部门</label>
+                <el-select v-model="filters.ownerDept" clearable placeholder="全部" style="width:120px">
+                  <el-option v-for="d in data.ownerDepts" :key="d.code" :label="d.name" :value="d.name"></el-option>
+                </el-select>
+              </div>
+              <div class="filter-item">
+                <label>分类</label>
+                <el-select v-model="filters.category" clearable placeholder="全部" style="width:130px">
+                  <el-option v-for="c in data.categories" :key="c.code" :label="c.code + ' ' + c.name" :value="c.code"></el-option>
+                </el-select>
+              </div>
+              <div class="filter-item">
+                <label>状态</label>
+                <el-select v-model="filters.status" clearable placeholder="全部" style="width:120px">
+                  <el-option v-for="o in statusOptions" :key="o.value" :label="o.label" :value="o.value"></el-option>
+                </el-select>
+              </div>
+              <div class="filter-item">
+                <label>密级</label>
+                <el-select v-model="filters.security" clearable placeholder="请选择" style="width:120px">
+                  <el-option v-for="o in securityOptions" :key="o.value" :label="o.label" :value="o.value"></el-option>
+                </el-select>
+              </div>
+              <div class="filter-item">
+                <label>数据域</label>
+                <el-select v-model="filters.accessDomain" clearable placeholder="请选择" style="width:120px">
+                  <el-option v-for="o in domainOptions" :key="o.value" :label="o.label" :value="o.value"></el-option>
+                </el-select>
+              </div>
+              <div class="filter-item">
+                <label>搜正文</label>
+                <el-switch v-model="filters.fullText" />
+              </div>
+              <el-button type="primary" @click="toast('已按条件刷新（实时过滤）')">搜索</el-button>
+              <el-button @click="resetFilters">重置</el-button>
+            </div>
+            <div class="toolbar">
+              <div class="left">
+                <el-button v-if="route === 'docs'" type="primary" @click="navigate('applyCreate')">新建申请</el-button>
+                <el-button @click="exportDocsExcel">导出 CSV</el-button>
+              </div>
+              <div class="right" style="color:#909399;font-size:12px;">可见 {{ filteredDocs.length }} 条 · 域 {{ statusTag(currentRole.domain).text }} · {{ route === 'reportDocs' ? '只读查询' : '业务台账' }}</div>
+            </div>
+            <el-table :data="pageSlice(filteredDocs,'docs')" size="small" stripe border style="width:100%">
+              <el-table-column label="文件编号" width="170">
+                <template #default="{ row }">{{ row.docNo || '-' }}</template>
+              </el-table-column>
+              <el-table-column label="文件名称" min-width="140">
+                <template #default="{ row }">{{ row.title || '-' }}<span v-if="isSecret(row)" class="sec-mi" title="机密">密</span></template>
+              </el-table-column>
+              <el-table-column label="文件级别" width="150">
+                <template #default="{ row }"><span class="tag" :class="statusTag(row.productType).cls">{{ ptName(row.productType) }}</span></template>
+              </el-table-column>
+              <el-table-column label="所属部门" width="90">
+                <template #default="{ row }">{{ row.ownerDept || row.dept || '-' }}</template>
+              </el-table-column>
+              <el-table-column label="状态" width="90">
+                <template #default="{ row }"><span class="tag" :class="statusTag(row.status).cls">{{ statusTag(row.status).text }}</span></template>
+              </el-table-column>
+              <el-table-column label="域" width="80">
+                <template #default="{ row }"><span class="tag" :class="statusTag(row.accessDomain).cls">{{ statusTag(row.accessDomain).text }}</span></template>
+              </el-table-column>
+              <el-table-column label="分类" width="70">
+                <template #default="{ row }">{{ row.category || '-' }}</template>
+              </el-table-column>
+              <el-table-column label="版本" width="70">
+                <template #default="{ row }">{{ row.version || '-' }}</template>
+              </el-table-column>
+              <el-table-column label="生效日期" width="110">
+                <template #default="{ row }">{{ row.effectiveDate || '-' }}</template>
+              </el-table-column>
+              <el-table-column label="责任人" width="80">
+                <template #default="{ row }">{{ row.owner || '-' }}</template>
+              </el-table-column>
+              <el-table-column label="操作" :width="route === 'reportDocs' ? 140 : 300" fixed="right">
+                <template #default="{ row }">
+                  <button class="link-btn" @click="openDoc(row)">详情</button>
+                  <button class="link-btn" @click="openPreview(row)">预览</button>
+                  <template v-if="route === 'docs'">
+                    <button v-if="isWebEditable(row)" class="link-btn" @click="openFormEdit(row)">编辑表单</button>
+                    <button class="link-btn" @click="mockDownload(row)">下载</button>
+                    <button class="link-btn" @click="controlledPrint(row)">打印</button>
+                  </template>
+                </template>
+              </el-table-column>
+            </el-table>
+            <div class="list-pager">
+              <el-pagination v-model:current-page="listPage.docs" :page-size="DOCS_PAGE_SIZE" :total="filteredDocs.length" layout="total, prev, pager, next" background small></el-pagination>
+            </div>
+          </div>
+        </template>
+
+        <!-- ========== My docs ========== -->
+        <template v-else-if="route === 'myDocs' || route === 'receipts'">
+          <div class="page-card">
+            <div class="section-title">
+              <span>分发给我的受控文件</span>
+              <span style="font-size:12px;color:var(--dcc-muted);font-weight:400;">{{ data.user.role }} · {{ data.user.name }} · {{ roleMyDocs.length }} 份</span>
+            </div>
+            <el-alert type="info" show-icon :closable="false" style="margin-bottom:12px;"
+              title="切换顶栏角色后，本列表与待签收数量会同步变化（按分发对象角色过滤）。"></el-alert>
+            <el-empty v-if="!roleMyDocs.length" description="当前角色暂无分发到的受控文件" :image-size="64"></el-empty>
+            <el-table v-if="roleMyDocs.length" :data="pageSlice(roleMyDocs,'myDocs')" size="small" stripe border>
+              <el-table-column label="文件编号" width="160"><template #default="{ row }">{{ row.docNo || '-' }}</template></el-table-column>
+              <el-table-column label="文件名称" min-width="180"><template #default="{ row }">{{ row.title || '-' }}<span v-if="isSecret(row)" class="sec-mi" title="机密">密</span></template></el-table-column>
+              <el-table-column label="文件级别" width="100"><template #default="{ row }">{{ ptName(row.productType) }}</template></el-table-column>
+              <el-table-column label="签收状态" width="100">
+                <template #default="{ row }"><span class="tag" :class="statusTag(row.receiptStatus).cls">{{ statusTag(row.receiptStatus).text }}</span></template>
+              </el-table-column>
+              <el-table-column label="分发日期" width="110"><template #default="{ row }">{{ row.distDate || '-' }}</template></el-table-column>
+              <el-table-column label="版本" width="70"><template #default="{ row }">{{ row.version || '-' }}</template></el-table-column>
+              <el-table-column label="操作" width="220">
+                <template #default="{ row }">
+                  <button class="link-btn" @click="openPreview(row)">预览</button>
+                  <button v-if="row.receiptStatus==='PENDING'" class="link-btn" @click="confirmReceipt(row)">确认签收</button>
+                  <button class="link-btn" @click="mockDownload(row)">下载</button>
+                  <button class="link-btn" @click="controlledPrint(row)">打印</button>
+                </template>
+              </el-table-column>
+            </el-table>
+            <div class="list-pager" v-if="roleMyDocs.length">
+              <el-pagination v-model:current-page="listPage.myDocs" :page-size="PAGE_SIZE" :total="roleMyDocs.length" layout="total, prev, pager, next" background small></el-pagination>
+            </div>
+          </div>
+        </template>
+
+        <!-- ========== My applies ========== -->
+        <template v-else-if="route === 'myApplies'">
+          <div class="page-card">
+            <div class="toolbar">
+              <div class="left">
+                <el-button type="primary" @click="navigate('applyCreate')">新建申请</el-button>
+              </div>
+            </div>
+            <el-table :data="pageSlice(data.applies,'applies')" size="small" stripe border>
+              <el-table-column label="申请单号" width="150"><template #default="{ row }">{{ row.applyNo || '-' }}</template></el-table-column>
+              <el-table-column label="类型" width="80">
+                <template #default="{ row }"><span class="tag" :class="statusTag(row.type).cls">{{ statusTag(row.type).text }}</span></template>
+              </el-table-column>
+              <el-table-column label="文件编号" width="150"><template #default="{ row }">{{ row.docNo || '-' }}</template></el-table-column>
+              <el-table-column label="文件名称" min-width="160"><template #default="{ row }">{{ row.title || '-' }}<span v-if="isSecret(row)" class="sec-mi" title="机密">密</span></template></el-table-column>
+              <el-table-column label="文件级别" width="100"><template #default="{ row }">{{ ptName(row.productType) }}</template></el-table-column>
+              <el-table-column label="状态" width="90">
+                <template #default="{ row }"><span class="tag" :class="statusTag(row.status).cls">{{ statusTag(row.status).text }}</span></template>
+              </el-table-column>
+              <el-table-column label="目标版本" width="90"><template #default="{ row }">{{ row.targetVersion || '-' }}</template></el-table-column>
+              <el-table-column label="申请人" width="80"><template #default="{ row }">{{ row.applicant || '-' }}</template></el-table-column>
+              <el-table-column label="提交时间" width="150"><template #default="{ row }">{{ row.submittedAt || '-' }}</template></el-table-column>
+              <el-table-column label="操作" width="120">
+                <template #default="{ row }">
+                  <button class="link-btn" @click="row.status==='IN_APPROVAL' ? openApprove({id: row.id, applyId: row.id, docNo: row.docNo, title: row.title, productType: row.productType, applicant: row.applicant+' / '+row.dept, node:'文控审核（终审）', time: row.submittedAt}) : toast('查看详情（演示）')">详情</button>
+                </template>
+              </el-table-column>
+            </el-table>
+            <div class="list-pager">
+              <el-pagination v-model:current-page="listPage.applies" :page-size="PAGE_SIZE" :total="data.applies.length" layout="total, prev, pager, next" background small></el-pagination>
+            </div>
+          </div>
+        </template>
+
+        <!-- ========== Todo approve ========== -->
+        <template v-else-if="route === 'todoApprove'">
+          <div class="page-card">
+            <div class="section-title"><span>待我审批（DCC 内置简易审批）</span></div>
+            <el-alert type="info" show-icon :closable="false" style="margin-bottom:12px;"
+              title="内置审批设计：提交申请后进入本页待办 → 点「去处理」打开审批弹窗（电子签名/时间戳/岗位权限）→ 文控终审通过后本条待办消失，并回写「我的申请」状态。入口：左侧「编制与审批 → 待我审批」。"></el-alert>
+            <el-empty v-if="!roleTodos.length" description="当前角色暂无待办审批"></el-empty>
+            <el-table v-if="roleTodos.length" :data="pageSlice(roleTodos,'todos')" size="small" stripe border style="width:100%">
+              <el-table-column label="文件编号" width="160"><template #default="{ row }">{{ row.docNo }}</template></el-table-column>
+              <el-table-column label="文件名称" min-width="180"><template #default="{ row }">{{ row.title || '-' }}<span v-if="isSecret(row)" class="sec-mi" title="机密">密</span></template></el-table-column>
+              <el-table-column label="文件级别" width="110"><template #default="{ row }">{{ ptName(row.productType) }}</template></el-table-column>
+              <el-table-column label="提交人 / 部门" width="160"><template #default="{ row }">{{ row.applicant }}</template></el-table-column>
+              <el-table-column label="当前环节" width="130"><template #default="{ row }">{{ row.node }}</template></el-table-column>
+              <el-table-column label="提交时间" width="150"><template #default="{ row }">{{ row.time }}</template></el-table-column>
+              <el-table-column label="操作" width="110" fixed="right">
+                <template #default="{ row }">
+                  <el-button type="primary" size="small" @click="openApprove(row)">去处理</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+            <div class="list-pager" v-if="roleTodos.length">
+              <el-pagination v-model:current-page="listPage.todos" :page-size="PAGE_SIZE" :total="roleTodos.length" layout="total, prev, pager, next" background small></el-pagination>
+            </div>
+          </div>
+        </template>
+
+        <!-- ========== Changes ========== -->
+        <template v-else-if="route === 'changes' || route === 'reportChanges'">
+          <div class="page-card">
+            <div class="section-title"><span>变更单</span></div>
+            <el-table :data="pageSlice(data.changes,'changes')" size="small" stripe border>
+              <el-table-column label="变更单号" width="150"><template #default="{ row }">{{ row.changeNo || '-' }}</template></el-table-column>
+              <el-table-column label="文件编号" width="150"><template #default="{ row }">{{ row.docNo || '-' }}</template></el-table-column>
+              <el-table-column label="文件名称" min-width="160"><template #default="{ row }">{{ row.title || '-' }}<span v-if="isSecret(row)" class="sec-mi" title="机密">密</span></template></el-table-column>
+              <el-table-column label="文件级别" width="100"><template #default="{ row }">{{ ptName(row.productType) }}</template></el-table-column>
+              <el-table-column label="状态" width="90">
+                <template #default="{ row }"><span class="tag" :class="statusTag(row.status).cls">{{ statusTag(row.status).text }}</span></template>
+              </el-table-column>
+              <el-table-column label="生效日" width="110"><template #default="{ row }">{{ row.effectiveDate || '-' }}</template></el-table-column>
+              <el-table-column label="版本" width="110">
+                <template #default="{ row }">{{ (row.fromVer || '-') + ' → ' + (row.toVer || '-') }}</template>
+              </el-table-column>
+              <el-table-column label="纸质回收" width="90"><template #default="{ row }">{{ row.recycleProgress || '-' }}</template></el-table-column>
+              <el-table-column label="操作" width="120">
+                <template #default>
+                  <button class="link-btn" @click="navigate('hardCopies')">回收进度</button>
+                </template>
+              </el-table-column>
+            </el-table>
+            <div class="list-pager">
+              <el-pagination v-model:current-page="listPage.changes" :page-size="PAGE_SIZE" :total="data.changes.length" layout="total, prev, pager, next" background small></el-pagination>
+            </div>
+          </div>
+        </template>
+
+        <!-- ========== Notices ========== -->
+        <template v-else-if="route === 'notices'">
+          <div class="page-card">
+            <div class="section-title"><span>变更通知</span></div>
+            <el-table :data="pageSlice(data.notices,'notices')" size="small" stripe border>
+              <el-table-column label="通知单号" width="150"><template #default="{ row }">{{ row.noticeNo || '-' }}</template></el-table-column>
+              <el-table-column label="标题" min-width="240"><template #default="{ row }">{{ row.title || '-' }}</template></el-table-column>
+              <el-table-column label="状态" width="90">
+                <template #default="{ row }"><span class="tag" :class="statusTag(row.status).cls">{{ statusTag(row.status).text }}</span></template>
+              </el-table-column>
+              <el-table-column label="发送时间" width="150"><template #default="{ row }">{{ row.sentAt || '-' }}</template></el-table-column>
+              <el-table-column label="已读" width="100">
+                <template #default="{ row }">{{ row.total - row.unread }}/{{ row.total }}</template>
+              </el-table-column>
+              <el-table-column label="操作" width="100">
+                <template #default>
+                  <button class="link-btn" @click="urgeNotice(row)">催办</button>
+                </template>
+              </el-table-column>
+            </el-table>
+            <div class="list-pager">
+              <el-pagination v-model:current-page="listPage.notices" :page-size="PAGE_SIZE" :total="data.notices.length" layout="total, prev, pager, next" background small></el-pagination>
+            </div>
+          </div>
+        </template>
+
+        <!-- ========== Distributions ========== -->
+        <template v-else-if="route === 'distributions' || route === 'reportDist'">
+          <div class="page-card">
+            <div class="toolbar">
+              <div class="left">
+                <el-button type="primary" @click="openDistForm()">新建分发</el-button>
+              </div>
+            </div>
+            <el-table :data="pageSlice(data.distributions,'distributions')" size="small" stripe border>
+              <el-table-column label="分发单号" width="150"><template #default="{ row }">{{ row.distNo || '-' }}</template></el-table-column>
+              <el-table-column label="文件编号" width="150"><template #default="{ row }">{{ row.docNo || '-' }}</template></el-table-column>
+              <el-table-column label="文件名称" min-width="160"><template #default="{ row }">{{ row.title || '-' }}<span v-if="isSecret(row)" class="sec-mi" title="机密">密</span></template></el-table-column>
+              <el-table-column label="文件级别" width="100"><template #default="{ row }">{{ ptName(row.productType) }}</template></el-table-column>
+              <el-table-column label="状态" width="100">
+                <template #default="{ row }"><span class="tag" :class="statusTag(row.status).cls">{{ statusTag(row.status).text }}</span></template>
+              </el-table-column>
+              <el-table-column label="发送时间" width="150"><template #default="{ row }">{{ row.sentAt || '-' }}</template></el-table-column>
+              <el-table-column label="版本" width="70"><template #default="{ row }">{{ row.version || '-' }}</template></el-table-column>
+              <el-table-column label="签收进度" width="90"><template #default="{ row }">{{ row.received || '-' }}</template></el-table-column>
+              <el-table-column label="操作" width="120">
+                <template #default="{ row }">
+                  <button class="link-btn" @click="openDistDetail(row)">明细</button>
+                  <button class="link-btn" @click="urgeDist(row)">催办</button>
+                </template>
+              </el-table-column>
+            </el-table>
+            <div class="list-pager">
+              <el-pagination v-model:current-page="listPage.distributions" :page-size="PAGE_SIZE" :total="data.distributions.length" layout="total, prev, pager, next" background small></el-pagination>
+            </div>
+          </div>
+        </template>
+
+        <!-- ========== Hard copies ========== -->
+        <template v-else-if="route === 'hardCopies'">
+          <div class="page-card">
+            <div class="toolbar">
+              <div class="left">
+                <el-button type="primary" @click="controlledPrint()">受控打印登记</el-button>
+                <el-tag type="danger" effect="plain">待回收 {{ hardRecycleCount }} 份</el-tag>
+              </div>
+              <div class="right" style="color:#909399;font-size:12px;">详情可查看；待回收/在用份可执行回收、盖章或丢失登记</div>
+            </div>
+            <el-table :data="pageSlice(data.hardCopies,'hardCopies')" size="small" stripe border>
+              <el-table-column label="纸质受控号" width="180"><template #default="{ row }">{{ row.copyNo || '-' }}</template></el-table-column>
+              <el-table-column label="文件编号" width="150"><template #default="{ row }">{{ row.docNo || '-' }}</template></el-table-column>
+              <el-table-column label="文件名称" min-width="150"><template #default="{ row }">{{ row.title || '-' }}<span v-if="isSecret(row)" class="sec-mi" title="机密">密</span></template></el-table-column>
+              <el-table-column label="状态" width="110">
+                <template #default="{ row }"><span class="tag" :class="statusTag(row.status).cls">{{ statusTag(row.status).text }}</span></template>
+              </el-table-column>
+              <el-table-column label="打印日期" width="110"><template #default="{ row }">{{ row.printedAt || '-' }}</template></el-table-column>
+              <el-table-column label="版本" width="70"><template #default="{ row }">{{ row.version || '-' }}</template></el-table-column>
+              <el-table-column label="持有人/组" width="110"><template #default="{ row }">{{ row.holder || '-' }}</template></el-table-column>
+              <el-table-column label="存放位置" min-width="120"><template #default="{ row }">{{ row.location || '-' }}</template></el-table-column>
+              <el-table-column label="操作" width="150" fixed="right">
+                <template #default="{ row }">
+                  <button class="link-btn" @click="openHardDetail(row)">详情</button>
+                  <button
+                    v-if="row.status==='RECYCLE_PENDING' || row.status==='IN_USE'"
+                    class="link-btn danger"
+                    @click="openRecycle(row)"
+                  >回收</button>
+                </template>
+              </el-table-column>
+            </el-table>
+            <div class="list-pager">
+              <el-pagination v-model:current-page="listPage.hardCopies" :page-size="PAGE_SIZE" :total="data.hardCopies.length" layout="total, prev, pager, next" background small></el-pagination>
+            </div>
+          </div>
+        </template>
+
+        <!-- ========== Borrows ========== -->
+        <template v-else-if="route === 'borrows' || route === 'reportBorrow'">
+          <div class="page-card">
+            <div class="toolbar">
+              <div class="left">
+                <el-button type="primary" @click="openBorrowForm">新建借阅</el-button>
+              </div>
+            </div>
+            <el-table :data="pageSlice(data.borrows,'borrows')" size="small" stripe border>
+              <el-table-column label="借阅单号" width="150"><template #default="{ row }">{{ row.borrowNo || '-' }}</template></el-table-column>
+              <el-table-column label="文件编号" width="150"><template #default="{ row }">{{ row.docNo || '-' }}</template></el-table-column>
+              <el-table-column label="文件名称" min-width="150"><template #default="{ row }">{{ row.title || '-' }}<span v-if="isSecret(row)" class="sec-mi" title="机密">密</span></template></el-table-column>
+              <el-table-column label="文件级别" width="100"><template #default="{ row }">{{ ptName(row.productType) }}</template></el-table-column>
+              <el-table-column label="类型" width="80">
+                <template #default="{ row }"><span class="tag" :class="statusTag(row.type).cls">{{ statusTag(row.type).text }}</span></template>
+              </el-table-column>
+              <el-table-column label="状态" width="90">
+                <template #default="{ row }"><span class="tag" :class="statusTag(row.status).cls">{{ statusTag(row.status).text }}</span></template>
+              </el-table-column>
+              <el-table-column label="应还日期" width="110"><template #default="{ row }">{{ row.expectReturn || '-' }}</template></el-table-column>
+              <el-table-column label="申请人" width="80"><template #default="{ row }">{{ row.applicant || '-' }}</template></el-table-column>
+              <el-table-column label="事由" min-width="140"><template #default="{ row }">{{ row.reason || '-' }}</template></el-table-column>
+              <el-table-column label="操作" width="140">
+                <template #default="{ row }">
+                  <button class="link-btn" @click="openPreview(row,'BORROW')">预览</button>
+                  <button class="link-btn" @click="toast(row.status==='OVERDUE'?'已催还：'+row.borrowNo:'归还登记：'+row.borrowNo)">{{ row.status==='OVERDUE'?'催还':'归还' }}</button>
+                </template>
+              </el-table-column>
+            </el-table>
+            <div class="list-pager">
+              <el-pagination v-model:current-page="listPage.borrows" :page-size="PAGE_SIZE" :total="data.borrows.length" layout="total, prev, pager, next" background small></el-pagination>
+            </div>
+
+            <div class="section-title" style="margin-top:24px;"><span>外发申请</span>
+              <el-button type="primary" size="small" @click="navigate('externalReleases')">管理外发</el-button>
+            </div>
+            <el-table v-if="route==='reportBorrow'" :data="data.externals" size="small" stripe border>
+              <el-table-column label="外发单号" width="150"><template #default="{ row }">{{ row.releaseNo || '-' }}</template></el-table-column>
+              <el-table-column label="文件编号" width="150"><template #default="{ row }">{{ row.docNo || '-' }}</template></el-table-column>
+              <el-table-column label="文件名称" min-width="140"><template #default="{ row }">{{ row.title || '-' }}<span v-if="isSecret(row)" class="sec-mi" title="机密">密</span></template></el-table-column>
+              <el-table-column label="状态" width="100">
+                <template #default="{ row }"><span class="tag" :class="statusTag(row.status).cls">{{ statusTag(row.status).text }}</span></template>
+              </el-table-column>
+              <el-table-column label="有效期至" width="110"><template #default="{ row }">{{ row.expireDate || '-' }}</template></el-table-column>
+              <el-table-column label="接收单位" min-width="160"><template #default="{ row }">{{ row.receiver || '-' }}</template></el-table-column>
+            </el-table>
+          </div>
+        </template>
+
+        <!-- ========== External releases ========== -->
+        <template v-else-if="route === 'externalReleases'">
+          <div class="page-card">
+            <div class="toolbar">
+              <div class="left">
+                <el-button type="primary" @click="openExternalForm">新建外发</el-button>
+              </div>
+            </div>
+            <el-alert type="warning" show-icon :closable="false" style="margin-bottom:12px;"
+              title="外发默认禁止下载，仅水印 PDF 预览链接；到期令牌自动失效。" />
+            <el-table :data="pageSlice(data.externals,'externals')" size="small" stripe border>
+              <el-table-column label="外发单号" width="150"><template #default="{ row }">{{ row.releaseNo || '-' }}</template></el-table-column>
+              <el-table-column label="文件编号" width="150"><template #default="{ row }">{{ row.docNo || '-' }}</template></el-table-column>
+              <el-table-column label="文件名称" min-width="150"><template #default="{ row }">{{ row.title || '-' }}<span v-if="isSecret(row)" class="sec-mi" title="机密">密</span></template></el-table-column>
+              <el-table-column label="文件级别" width="100"><template #default="{ row }">{{ ptName(row.productType) }}</template></el-table-column>
+              <el-table-column label="状态" width="100">
+                <template #default="{ row }"><span class="tag" :class="statusTag(row.status).cls">{{ statusTag(row.status).text }}</span></template>
+              </el-table-column>
+              <el-table-column label="有效期至" width="110"><template #default="{ row }">{{ row.expireDate || '-' }}</template></el-table-column>
+              <el-table-column label="接收单位" min-width="140"><template #default="{ row }">{{ row.receiver || '-' }}</template></el-table-column>
+              <el-table-column label="申请人" width="80"><template #default="{ row }">{{ row.applicant || '-' }}</template></el-table-column>
+              <el-table-column label="操作" width="160">
+                <template #default="{ row }">
+                  <button class="link-btn" @click="openPreview(row,'EXTERNAL')">预览</button>
+                  <button v-if="row.status==='IN_APPROVAL'" class="link-btn" @click="openApprove({bizType:'EXTERNAL', releaseId:row.id, docNo:row.docNo, title:row.title, productType:row.productType, applicant:row.applicant+' / 客服', node:'文控审核（终审）', time:row.expireDate || '-'})">审批</button>
+                  <button v-else-if="row.status!=='REVOKED'" class="link-btn" @click="revokeExternal(row)">撤销</button>
+                  <span v-else style="color:#909399;font-size:12px;">已撤销</span>
+                </template>
+              </el-table-column>
+            </el-table>
+            <div class="list-pager">
+              <el-pagination v-model:current-page="listPage.externals" :page-size="PAGE_SIZE" :total="data.externals.length" layout="total, prev, pager, next" background small></el-pagination>
+            </div>
+          </div>
+        </template>
+
+        <!-- ========== External docs ========== -->
+        <template v-else-if="route === 'externalDocs'">
+          <div class="page-card">
+            <div class="toolbar">
+              <div class="left">
+                <el-button type="primary" @click="openExtDocForm">登记外来文件</el-button>
+              </div>
+            </div>
+            <el-table :data="pageSlice(data.externalDocs,'externalDocs')" size="small" stripe border>
+              <el-table-column label="文件编号" width="180"><template #default="{ row }">{{ row.extNo || '-' }}</template></el-table-column>
+              <el-table-column label="文件名称" min-width="220">
+                <template #default="{ row }">
+                  {{ row.title || '-' }}
+                  <span v-if="row.security==='SECRET' || isSecret(row)" class="sec-mi" title="机密">密</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="来源类型" width="90">
+                <template #default="{ row }"><span class="tag" :class="statusTag(row.sourceType).cls">{{ statusTag(row.sourceType).text }}</span></template>
+              </el-table-column>
+              <el-table-column label="状态" width="90">
+                <template #default="{ row }"><span class="tag" :class="statusTag(row.status).cls">{{ statusTag(row.status).text }}</span></template>
+              </el-table-column>
+              <el-table-column label="接收日" width="110"><template #default="{ row }">{{ row.receiveDate || '-' }}</template></el-table-column>
+              <el-table-column label="失效日" width="110"><template #default="{ row }">{{ row.expireDate || '-' }}</template></el-table-column>
+              <el-table-column label="来源单位" min-width="140"><template #default="{ row }">{{ row.sourceOrg || '-' }}</template></el-table-column>
+              <el-table-column label="责任人" width="80"><template #default="{ row }">{{ row.owner || '-' }}</template></el-table-column>
+              <el-table-column label="操作" width="100">
+                <template #default="{ row }">
+                  <button class="link-btn" @click="openPreview({title:row.title, docNo:row.extNo, version:'-'})">预览</button>
+                </template>
+              </el-table-column>
+            </el-table>
+            <div class="list-pager">
+              <el-pagination v-model:current-page="listPage.externalDocs" :page-size="PAGE_SIZE" :total="data.externalDocs.length" layout="total, prev, pager, next" background small></el-pagination>
+            </div>
+          </div>
+        </template>
+
+        <!-- ========== Reviews ========== -->
+        <template v-else-if="route === 'reviews'">
+          <div class="page-card">
+            <div class="section-title"><span>复审任务</span></div>
+            <el-table :data="pageSlice(data.reviews,'reviews')" size="small" stripe border>
+              <el-table-column label="文件编号" width="150"><template #default="{ row }">{{ row.docNo || '-' }}</template></el-table-column>
+              <el-table-column label="文件名称" min-width="160"><template #default="{ row }">{{ row.title || '-' }}<span v-if="isSecret(row)" class="sec-mi" title="机密">密</span></template></el-table-column>
+              <el-table-column label="文件级别" width="100"><template #default="{ row }">{{ ptName(row.productType) }}</template></el-table-column>
+              <el-table-column label="状态" width="90">
+                <template #default="{ row }"><span class="tag" :class="statusTag(row.status).cls">{{ statusTag(row.status).text }}</span></template>
+              </el-table-column>
+              <el-table-column label="到期日" width="110"><template #default="{ row }">{{ row.dueDate || '-' }}</template></el-table-column>
+              <el-table-column label="责任人" width="80"><template #default="{ row }">{{ row.assignee || '-' }}</template></el-table-column>
+              <el-table-column label="结论" width="90"><template #default="{ row }">{{ row.conclusion || '-' }}</template></el-table-column>
+              <el-table-column label="操作" width="220">
+                <template #default="{ row }">
+                  <template v-if="row.status!=='DONE'">
+                    <button class="link-btn" @click="row.status='DONE';row.conclusion='KEEP';toast('已维持有效，复审日已顺延')">维持有效</button>
+                    <button class="link-btn" @click="startRevise(row)">发起修订</button>
+                    <button class="link-btn danger" @click="startObsolete(row)">作废</button>
+                  </template>
+                  <span v-if="row.status==='DONE'" style="color:#909399;font-size:12px;">已完成</span>
+                </template>
+              </el-table-column>
+            </el-table>
+            <div class="list-pager">
+              <el-pagination v-model:current-page="listPage.reviews" :page-size="PAGE_SIZE" :total="data.reviews.length" layout="total, prev, pager, next" background small></el-pagination>
+            </div>
+          </div>
+        </template>
+
+        <!-- ========== Access logs ========== -->
+        <template v-else-if="route === 'reportAccess'">
+          <div class="page-card">
+            <div class="toolbar">
+              <div class="left"><el-button @click="exportAccessLog">导出审计包</el-button></div>
+            </div>
+            <el-table :data="pageSlice(data.accessLogs,'accessLogs')" size="small" stripe border>
+              <el-table-column label="时间" width="150"><template #default="{ row }">{{ row.time || '-' }}</template></el-table-column>
+              <el-table-column label="用户" width="100"><template #default="{ row }">{{ row.user || '-' }}</template></el-table-column>
+              <el-table-column label="文件编号" width="150"><template #default="{ row }">{{ row.docNo || '-' }}</template></el-table-column>
+              <el-table-column label="文件名称" min-width="150"><template #default="{ row }">{{ row.title || '-' }}<span v-if="isSecret(row)" class="sec-mi" title="机密">密</span></template></el-table-column>
+              <el-table-column label="动作" width="100">
+                <template #default="{ row }"><span class="tag" :class="statusTag(row.action).cls">{{ statusTag(row.action).text }}</span></template>
+              </el-table-column>
+              <el-table-column label="版本" width="70"><template #default="{ row }">{{ row.version || '-' }}</template></el-table-column>
+              <el-table-column label="IP" width="130"><template #default="{ row }">{{ row.ip || '-' }}</template></el-table-column>
+            </el-table>
+            <div class="list-pager">
+              <el-pagination v-model:current-page="listPage.accessLogs" :page-size="PAGE_SIZE" :total="data.accessLogs.length" layout="total, prev, pager, next" background small></el-pagination>
+            </div>
+          </div>
+        </template>
+
+        <!-- ========== Access applies ========== -->
+        <template v-else-if="route === 'accessApplies'">
+          <div class="page-card">
+            <el-alert type="warning" show-icon :closable="false" style="margin-bottom:12px;"
+              title="常态只读：非本部门或机密文件的打印/下载须二次申请；审批通过后限时使用并留痕。" />
+            <div class="toolbar">
+              <div class="left">
+                <el-button type="primary" @click="openAccessApply('PRINT')">新建打印申请</el-button>
+                <el-button @click="openAccessApply('DOWNLOAD')">新建下载申请</el-button>
+              </div>
+            </div>
+            <el-alert type="info" show-icon :closable="false" style="margin-bottom:12px;"
+              title="文控看全部申请；其他角色仅看本人提交的打印/下载申请。"></el-alert>
+            <el-empty v-if="!roleAccessApplies.length" description="当前角色暂无打印/下载申请" :image-size="64"></el-empty>
+            <el-table v-if="roleAccessApplies.length" :data="pageSlice(roleAccessApplies,'accessApplies')" size="small" stripe border>
+              <el-table-column label="申请单号" width="150"><template #default="{ row }">{{ row.applyNo || '-' }}</template></el-table-column>
+              <el-table-column label="动作" width="80">
+                <template #default="{ row }"><span class="tag" :class="statusTag(row.action).cls">{{ statusTag(row.action).text }}</span></template>
+              </el-table-column>
+              <el-table-column label="文件编号" width="150"><template #default="{ row }">{{ row.docNo || '-' }}</template></el-table-column>
+              <el-table-column label="文件名称" min-width="150"><template #default="{ row }">{{ row.title || '-' }}<span v-if="isSecret(row)" class="sec-mi" title="机密">密</span></template></el-table-column>
+              <el-table-column label="文件级别" width="100"><template #default="{ row }">{{ ptName(row.productType) }}</template></el-table-column>
+              <el-table-column label="状态" width="100">
+                <template #default="{ row }"><span class="tag" :class="statusTag(row.status).cls">{{ statusTag(row.status).text }}</span></template>
+              </el-table-column>
+              <el-table-column label="提交时间" width="140"><template #default="{ row }">{{ row.submittedAt || '-' }}</template></el-table-column>
+              <el-table-column label="申请人" width="80"><template #default="{ row }">{{ row.applicant || '-' }}</template></el-table-column>
+              <el-table-column label="用途" min-width="140"><template #default="{ row }">{{ row.reason || '-' }}</template></el-table-column>
+            </el-table>
+            <div class="list-pager">
+              <el-pagination v-model:current-page="listPage.accessApplies" :page-size="PAGE_SIZE" :total="roleAccessApplies.length" layout="total, prev, pager, next" background small></el-pagination>
+            </div>
+          </div>
+        </template>
+
+        <!-- ========== Trainings ========== -->
+        <template v-else-if="route === 'trainings'">
+          <div class="page-card">
+            <el-alert type="success" show-icon :closable="false" style="margin-bottom:12px;"
+              title="文件生效后按岗位培训矩阵自动下发任务；完成后生成培训证明（可纳入合规导出包）。" />
+            <el-alert type="info" show-icon :closable="false" style="margin-bottom:12px;"
+              :title="'当前受训人：' + data.user.name + '（切换角色后列表同步）'"></el-alert>
+            <el-empty v-if="!roleTrainings.length" description="当前角色暂无培训待办" :image-size="64"></el-empty>
+            <el-table v-if="roleTrainings.length" :data="pageSlice(roleTrainings,'trainings')" size="small" stripe border>
+              <el-table-column label="任务号" width="140"><template #default="{ row }">{{ row.taskNo || '-' }}</template></el-table-column>
+              <el-table-column label="文件编号" width="150"><template #default="{ row }">{{ row.docNo || '-' }}</template></el-table-column>
+              <el-table-column label="文件名称" min-width="150"><template #default="{ row }">{{ row.title || '-' }}<span v-if="isSecret(row)" class="sec-mi" title="机密">密</span></template></el-table-column>
+              <el-table-column label="文件级别" width="100"><template #default="{ row }">{{ ptName(row.productType) }}</template></el-table-column>
+              <el-table-column label="状态" width="90">
+                <template #default="{ row }"><span class="tag" :class="statusTag(row.status).cls">{{ statusTag(row.status).text }}</span></template>
+              </el-table-column>
+              <el-table-column label="截止日期" width="110"><template #default="{ row }">{{ row.dueDate || '-' }}</template></el-table-column>
+              <el-table-column label="版本" width="70"><template #default="{ row }">{{ row.version || '-' }}</template></el-table-column>
+              <el-table-column label="受训人" width="80"><template #default="{ row }">{{ row.assignee || '-' }}</template></el-table-column>
+              <el-table-column label="岗位" width="110"><template #default="{ row }">{{ row.post || '-' }}</template></el-table-column>
+              <el-table-column label="说明" min-width="120"><template #default="{ row }">{{ row.note || '-' }}</template></el-table-column>
+              <el-table-column label="操作" width="160">
+                <template #default="{ row }">
+                  <button v-if="row.status!=='DONE'" class="link-btn" @click="completeTraining(row)">完成并出证明</button>
+                  <button v-else class="link-btn" @click="downloadTrainingCert(row)">下载证明</button>
+                </template>
+              </el-table-column>
+            </el-table>
+            <div class="list-pager">
+              <el-pagination v-model:current-page="listPage.trainings" :page-size="PAGE_SIZE" :total="roleTrainings.length" layout="total, prev, pager, next" background small></el-pagination>
+            </div>
+          </div>
+        </template>
+
+        <!-- ========== Compliance export ========== -->
+        <template v-else-if="route === 'complianceExport'">
+          <div class="page-card compliance-export-page">
+            <div class="section-title"><span>一键合规导出（时间点打包）</span></div>
+            <el-alert type="info" show-icon :closable="false" style="margin-bottom:12px;"
+              title="打包内容：文件版本清单 + 审批记录（签名/时间戳/岗位权限）+ 分发台账 + 培训证明；可选正文水印 PDF。生成后自动下载到本地。"></el-alert>
+            <el-form label-position="top" class="compliance-form">
+              <div class="form-grid" style="grid-template-columns:1fr 1fr;gap:16px;max-width:720px;">
+                <el-form-item label="截止时间点">
+                  <el-input v-model="exportForm.asOfTime" placeholder="YYYY-MM-DD HH:mm" style="width:100%" />
+                </el-form-item>
+                <el-form-item label="范围">
+                  <el-select v-model="exportForm.scope" placeholder="请选择导出范围" style="width:100%">
+                    <el-option v-for="o in exportScopeOptions" :key="o.value" :label="o.label" :value="o.value"></el-option>
+                  </el-select>
+                </el-form-item>
+                <el-form-item label="含正文 PDF">
+                  <el-switch v-model="exportForm.includeBody" />
+                </el-form-item>
+                <el-form-item label=" ">
+                  <el-button type="primary" @click="runComplianceExport">生成并下载合规包</el-button>
+                </el-form-item>
+              </div>
+            </el-form>
+            <div class="section-title" style="margin-top:8px;"><span>导出历史</span></div>
+            <el-table :data="pageSlice(data.complianceExports,'compliance')" size="small" border stripe style="width:100%">
+              <el-table-column label="导出单号" width="150"><template #default="{ row }">{{ row.exportNo || '-' }}</template></el-table-column>
+              <el-table-column label="时间点" width="140"><template #default="{ row }">{{ row.asOfTime || '-' }}</template></el-table-column>
+              <el-table-column label="范围" min-width="120"><template #default="{ row }">{{ row.scope || '-' }}</template></el-table-column>
+              <el-table-column label="包内容" min-width="220" show-overflow-tooltip><template #default="{ row }">{{ row.pack || '-' }}</template></el-table-column>
+              <el-table-column label="操作人" width="80"><template #default="{ row }">{{ row.createdBy || '-' }}</template></el-table-column>
+              <el-table-column label="操作" width="100">
+                <template #default="{ row }"><button class="link-btn" @click="downloadCompliancePack(row)">下载</button></template>
+              </el-table-column>
+            </el-table>
+            <div class="list-pager">
+              <el-pagination v-model:current-page="listPage.compliance" :page-size="PAGE_SIZE" :total="data.complianceExports.length" layout="total, prev, pager, next" background small></el-pagination>
+            </div>
+          </div>
+        </template>
+
+        <template v-else-if="route === 'cfgProduct'">
+          <div class="page-card">
+            <div class="section-title"><span>文件级别（原产品类型 → 一/二/三级）</span></div>
+            <el-alert type="warning" show-icon :closable="false" style="margin-bottom:12px;"
+              title="一级宏观、二级部门细则：网页不可改正文，变更须审批。三级表单：可在台账直接「编辑表单」，无需修订审批。"></el-alert>
+            <el-table :data="data.productTypes" size="small" border stripe style="width:100%;margin-bottom:16px;">
+              <el-table-column label="级别" width="80"><template #default="{ row }">{{ row.code }}</template></el-table-column>
+              <el-table-column label="名称" width="160"><template #default="{ row }">{{ row.name }}</template></el-table-column>
+              <el-table-column label="网页可编辑" width="110"><template #default="{ row }">{{ row.editable ? '是' : '否' }}</template></el-table-column>
+              <el-table-column label="改正文是否审批" width="130"><template #default="{ row }">{{ row.needApproveContent ? '须审批' : '表单直改免审批' }}</template></el-table-column>
+              <el-table-column label="说明" min-width="220"><template #default="{ row }">{{ row.remark }}</template></el-table-column>
+            </el-table>
+            <div class="section-title"><span>各级别下的文件清单</span></div>
+            <el-table :data="productTypeFileRows" size="small" border stripe style="width:100%">
+              <el-table-column label="文件编号" width="160"><template #default="{ row }">{{ row.docNo }}</template></el-table-column>
+              <el-table-column label="文件名称" min-width="180"><template #default="{ row }">{{ row.title || '-' }}<span v-if="isSecret(row)" class="sec-mi" title="机密">密</span></template></el-table-column>
+              <el-table-column label="文件级别" width="130"><template #default="{ row }">{{ row.productTypeName }}</template></el-table-column>
+              <el-table-column label="所属部门" width="90"><template #default="{ row }">{{ row.ownerDept || '-' }}</template></el-table-column>
+              <el-table-column label="状态" width="90"><template #default="{ row }"><span class="tag" :class="statusTag(row.status).cls">{{ statusTag(row.status).text }}</span></template></el-table-column>
+              <el-table-column label="操作" width="160">
+                <template #default="{ row }">
+                  <button class="link-btn" @click="openDocByNo(row.docNo)">详情</button>
+                  <button v-if="row.webEditable" class="link-btn" @click="openFormEdit(row)">编辑表单</button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
+        </template>
+
+        <template v-else-if="route === 'cfgOwnerDept'">
+          <div class="page-card">
+            <div class="section-title"><span>文件所属部门</span></div>
+            <el-alert type="info" show-icon :closable="false" style="margin-bottom:12px;"
+              title="演示组织：行政部（文控）+ 市场部 / 技术部 / IT部 / 财务部。编制部门与所属部门同口径；本部门非密一/二/三级可直下直打，机密仍须申请。"></el-alert>
+            <el-table :data="data.ownerDepts" size="small" border stripe style="width:100%;margin-bottom:16px;">
+              <el-table-column label="编码" width="100"><template #default="{ row }">{{ row.code }}</template></el-table-column>
+              <el-table-column label="部门名称" min-width="160"><template #default="{ row }">{{ row.name }}</template></el-table-column>
+              <el-table-column label="文件数" width="100">
+                <template #default="{ row }">{{ countDocsByOwnerDept(row.name) }}</template>
+              </el-table-column>
+            </el-table>
+            <div class="section-title"><span>各部门文件清单</span></div>
+            <el-table :data="ownerDeptFileRows" size="small" border stripe style="width:100%">
+              <el-table-column label="所属部门" width="100"><template #default="{ row }">{{ row.ownerDept }}</template></el-table-column>
+              <el-table-column label="文件编号" width="160"><template #default="{ row }">{{ row.docNo }}</template></el-table-column>
+              <el-table-column label="文件名称" min-width="180"><template #default="{ row }">{{ row.title || '-' }}<span v-if="isSecret(row)" class="sec-mi" title="机密">密</span></template></el-table-column>
+              <el-table-column label="文件级别" width="130"><template #default="{ row }">{{ row.productTypeName }}</template></el-table-column>
+              <el-table-column label="密级" width="80"><template #default="{ row }"><span class="tag" :class="statusTag(row.security).cls">{{ statusTag(row.security).text }}</span></template></el-table-column>
+              <el-table-column label="操作" width="100"><template #default="{ row }"><button class="link-btn" @click="openDocByNo(row.docNo)">详情</button></template></el-table-column>
+            </el-table>
+          </div>
+        </template>
+
+        <template v-else-if="route === 'cfgTraining'">
+          <div class="page-card">
+            <div class="section-title"><span>岗位-文件培训矩阵</span></div>
+            <el-table :data="data.trainingMatrix" size="small" border stripe>
+              <el-table-column label="分类" width="80"><template #default="{ row }">{{ row.category || '-' }}</template></el-table-column>
+              <el-table-column label="文件级别" width="120">
+                <template #default="{ row }">{{ ptName(row.productType) }}</template>
+              </el-table-column>
+              <el-table-column label="岗位" min-width="140"><template #default="{ row }">{{ row.post || '-' }}</template></el-table-column>
+              <el-table-column label="到期天数" width="100"><template #default="{ row }">{{ row.dueDays || '-' }}</template></el-table-column>
+              <el-table-column label="强制" width="80">
+                <template #default="{ row }">{{ row.mustTrain ? '是' : '否' }}</template>
+              </el-table-column>
+            </el-table>
+          </div>
+        </template>
+
+        <!-- ========== Config ========== -->
+        <template v-else-if="route === 'cfgCategory'">
+          <div class="page-card">
+            <el-alert
+              :type="isDocController ? 'info' : 'warning'"
+              show-icon
+              :closable="false"
+              style="margin-bottom:12px;"
+              :title="isDocController
+                ? '文件分类由文控维护：可新增分类，编码建议大写英文字母/下划线，保存后立即出现在台账与申请下拉中。'
+                : '仅文控员可新增分类。当前角色为「' + data.user.role + '」，您只能查看。请在顶栏切换为「文控员」后再操作。'"
+            ></el-alert>
+            <div class="toolbar">
+              <div class="left">
+                <el-button type="primary" :disabled="!isDocController" @click="openCategoryForm">新增分类</el-button>
+              </div>
+              <div class="right" style="color:#909399;font-size:12px;">共 {{ data.categories.length }} 个分类</div>
+            </div>
+            <el-table :data="data.categories" size="small" stripe border>
+              <el-table-column label="编码" width="110"><template #default="{ row }">{{ row.code || '-' }}</template></el-table-column>
+              <el-table-column label="名称" min-width="160"><template #default="{ row }">{{ row.name || '-' }}</template></el-table-column>
+              <el-table-column label="默认复审(月)" width="120"><template #default="{ row }">{{ row.reviewMonths || '-' }}</template></el-table-column>
+              <el-table-column label="默认可下载" width="110">
+                <template #default="{ row }">{{ row.allowDownload ? '是' : '否' }}</template>
+              </el-table-column>
+              <el-table-column label="备注" min-width="140" show-overflow-tooltip>
+                <template #default="{ row }">{{ row.remark || '-' }}</template>
+              </el-table-column>
+            </el-table>
+          </div>
+        </template>
+
+        <template v-else-if="route === 'cfgNumber'">
+          <div class="page-card">
+            <el-table :data="data.numberRules" size="small" stripe border>
+              <el-table-column label="规则名称" width="140"><template #default="{ row }">{{ row.name || '-' }}</template></el-table-column>
+              <el-table-column label="编号模式" min-width="220"><template #default="{ row }">{{ row.pattern || '-' }}</template></el-table-column>
+              <el-table-column label="示例" width="180"><template #default="{ row }">{{ row.example || '-' }}</template></el-table-column>
+              <el-table-column label="序号重置" width="100"><template #default="{ row }">{{ row.reset || '-' }}</template></el-table-column>
+            </el-table>
+          </div>
+        </template>
+
+        <template v-else-if="route === 'cfgApproval'">
+          <div class="page-card">
+            <el-alert type="info" show-icon :closable="false" style="margin-bottom:12px;"
+              title="配置：维护各业务类型的审批节点顺序（如 部门负责人 → 文控员终审）。公司暂无质量批准模块，勿增加质量批准节点。"></el-alert>
+            <el-table :data="data.approvalTemplates" size="small" stripe border>
+              <el-table-column label="模板编码" width="160"><template #default="{ row }">{{ row.code || '-' }}</template></el-table-column>
+              <el-table-column label="名称" width="120"><template #default="{ row }">{{ row.name || '-' }}</template></el-table-column>
+              <el-table-column label="审批节点" min-width="280"><template #default="{ row }">{{ row.nodes || '-' }}</template></el-table-column>
+              <el-table-column label="操作" width="100">
+                <template #default="{ row }">
+                  <button class="link-btn" @click="openTplConfig(row)">配置节点</button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
+        </template>
+
+        <template v-else-if="route === 'cfgWatermark'">
+          <div class="page-card" style="max-width:760px;">
+            <div class="section-title"><span>水印策略（全局强制）</span></div>
+            <el-alert type="error" show-icon :closable="false" style="margin-bottom:12px;"
+              title="V1.1：预览 / 下载 / 打印三条水印全局强制开启，不可关闭。另叠红色阶段水印：初级文件 / 审批完成 / 已分发 / 修订 / 失效 / 借阅 / 外发；机密另加正中斜对角「机密文件」。" />
+            <el-form label-width="120px">
+              <el-form-item label="水印模板">
+                <el-input v-model="data.watermark.template" />
+              </el-form-item>
+              <el-form-item label="预览加水印">
+                <el-switch v-model="data.watermark.preview" disabled />
+              </el-form-item>
+              <el-form-item label="下载加水印">
+                <el-switch v-model="data.watermark.download" disabled />
+              </el-form-item>
+              <el-form-item label="打印加水印">
+                <el-switch v-model="data.watermark.print" disabled />
+              </el-form-item>
+              <el-form-item label="透明度">
+                <el-slider v-model="data.watermark.opacity" :min="0.05" :max="0.4" :step="0.01" style="width:280px" />
+              </el-form-item>
+              <el-form-item label="阶段预览">
+                <div style="display:flex;flex-wrap:wrap;gap:8px;">
+                  <el-button size="small" @click="openPreview({docNo:'MG-WI-2026-0022',title:'访客入室安全须知',version:'1.0',status:'DRAFT',security:'INTERNAL'},'CREATE')">初级文件</el-button>
+                  <el-button size="small" @click="openPreview(data.documents.find(function(d){return d.status==='EFFECTIVE' && !(data.distributions||[]).some(function(x){return x.docNo===d.docNo;});}) || {docNo:'MG-QM-2025-0003',title:'内部审核控制程序',version:'1.0',status:'EFFECTIVE',security:'INTERNAL'})">审批完成</el-button>
+                  <el-button size="small" @click="openPreview(data.documents[0])">已分发</el-button>
+                  <el-button size="small" @click="openPreview(data.documents.find(function(d){return d.status==='REVISING';}))">修订</el-button>
+                  <el-button size="small" @click="openPreview(data.documents.find(function(d){return d.status==='OBSOLETE';}))">失效</el-button>
+                  <el-button size="small" @click="openPreview(data.documents.find(function(d){return d.security==='SECRET';}))">机密</el-button>
+                  <el-button size="small" @click="openPreview(data.borrows[0],'BORROW')">借阅</el-button>
+                  <el-button size="small" @click="openPreview(data.externals[0],'EXTERNAL')">外发</el-button>
+                </div>
+              </el-form-item>
+              <el-form-item>
+                <el-button type="primary" @click="toast('水印策略已保存（强制开关不可关）')">保存</el-button>
+                <el-button @click="openPreview(data.documents[0])">预览效果</el-button>
+              </el-form-item>
+            </el-form>
+          </div>
+        </template>
+
+        <!-- applyCreate/Revise/Obsolete open drawer via watch; show tip card -->
+        <template v-else-if="route === 'applyCreate' || route === 'applyRevise' || route === 'applyObsolete'">
+          <div class="page-card">
+            <el-empty description="正在打开申请表单…">
+              <el-button type="primary" @click="openApply(route==='applyCreate'?'CREATE':route==='applyRevise'?'REVISE':'OBSOLETE', createForm.docNo || applySourceDocNo)">重新打开表单</el-button>
+            </el-empty>
+          </div>
+        </template>
+
+        <div class="footer-note">© 2026 米格实验室 · DCC文控原型 P2 · 对齐需求说明书 V1.5.3（阶段水印 / 角色视图 / 合规按级别）</div>
+
+        <!-- 工作台：页脚下方 — 给使用者看的操作流程图 -->
+        <div v-if="route === 'dashboard'" class="user-flow-guide">
+          <div class="user-flow-head">
+            <h3>使用者操作流程指南</h3>
+            <p>对齐需求 <strong>V1.5.3</strong>。先分清<strong>文件级别</strong>与<strong>所属部门</strong>；顶栏切换角色后，工作台统计、「我的受控文件」、待办与培训会同步变化。</p>
+          </div>
+
+          <div class="flow-block">
+            <div class="flow-block-title"><span class="flow-no">0</span>文件级别是什么？（原「产品类型」）</div>
+            <div class="flow-mini-list">
+              <div><b>一级 · 宏观文件</b>：公司级/宏观制度。网页<strong>不可</strong>直接改正文；新建、修订、作废都要走审批（部门负责人 → 文控终审）。</div>
+              <div><b>二级 · 部门细则</b>：各部门具体作业细则。网页<strong>不可</strong>直接改正文；新建、修订、作废同样要审批。</div>
+              <div><b>三级 · 表单</b>：可在台账「编辑表单」直接改；<strong>每次保存自动升主版本并记版本历史</strong>（免审批）；新建/作废仍走审批。</div>
+            </div>
+            <div class="flow-tip">组织口径：行政部（文控）+ 市场部 / 技术部 / IT部 / 财务部。对本部门<strong>非机密</strong>的一/二/三级文件均可<strong>直接下载/打印</strong>；编制部门与所属部门同口径，便于演示本部门直下。</div>
+          </div>
+
+          <div class="flow-block">
+            <div class="flow-block-title"><span class="flow-no">1</span>哪些要审批？哪些不要？</div>
+            <div class="flow-mini-list">
+              <div><b>需要审批</b>：一级/二级的新建、修订、作废；三级的新建入库、作废；外发；非本部门或机密文件的打印/下载二次申请；借阅等（链：部门负责人 → 文控）。</div>
+              <div><b>不需要审批</b>：三级表单网页日常改内容；本部门非密一/二/三级的下载/打印；已有权限时的水印预览。</div>
+            </div>
+          </div>
+
+          <div class="flow-block">
+            <div class="flow-block-title"><span class="flow-no">2</span>新建受控文件（一级 / 二级 / 三级首次入库）</div>
+            <div class="flow-steps">
+              <div class="flow-step"><em>①</em><span>新建申请</span><small>选文件级别 + 所属部门</small></div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-step"><em>②</em><span>部门负责人审</span><small>电子签名</small></div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-step"><em>③</em><span>文控终审</span><small>确认编号生效</small></div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-step"><em>④</em><span>文控勾选分发</span><small>不自动全员分发</small></div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-step"><em>⑤</em><span>签收 / 培训</span><small>三级可再编辑表单</small></div>
+            </div>
+          </div>
+
+          <div class="flow-block">
+            <div class="flow-block-title"><span class="flow-no">3</span>改内容怎么走？</div>
+            <div class="flow-steps">
+              <div class="flow-step"><em>一级/二级</em><span>修订申请</span><small>变更原因+生效日 → 审批 → 升版</small></div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-step"><em>旧版失效</em><span>通知与纸质回收</span><small>回收完才可关变更单</small></div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-step"><em>三级表单</em><span>台账「编辑表单」</span><small>保存即升版，免审批</small></div>
+            </div>
+          </div>
+
+          <div class="flow-block">
+            <div class="flow-block-title"><span class="flow-no">4</span>下载 / 打印怎么判断？</div>
+            <div class="flow-steps">
+              <div class="flow-step"><em>①</em><span>是否机密？</span><small>有「密」→ 必须二次申请</small></div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-step"><em>②</em><span>是否本部门？</span><small>一/二/三级非密均可直下直打</small></div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-step"><em>③</em><span>否则申请</span><small>可选具体文件后提交</small></div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-step"><em>④</em><span>水印输出</span><small>平铺水印 + 红色阶段水印</small></div>
+            </div>
+            <div class="flow-tip">顶栏切换部门员工体验本部门直下；文控有全局下载打印权限。打印/下载申请弹窗须<strong>选择文件</strong>，不再写死演示文件。</div>
+          </div>
+
+          <div class="flow-block">
+            <div class="flow-block-title"><span class="flow-no">5</span>红色阶段水印看什么？</div>
+            <div class="flow-mini-list">
+              <div><b>初级文件</b>（新建/审批中）· <b>审批完成</b>（已生效未分发）· <b>已分发</b> · <b>修订</b> · <b>失效</b>（旧版/废止）</div>
+              <div><b>借阅 / 外发</b>：从对应列表点预览时左上角显示「借阅」「外发」</div>
+              <div><b>机密</b>：正中央斜对角拉长「机密文件」，可与上列角标同时出现</div>
+              <div>原有姓名·工号·编号·时间平铺水印<strong>保留不变</strong>；阶段水印字号偏小，避免挡正文。可在「基础配置 → 水印策略」分阶段预览。</div>
+            </div>
+          </div>
+
+          <div class="flow-grid-2">
+            <div class="flow-block">
+              <div class="flow-block-title"><span class="flow-no">6</span>切换角色后看什么？</div>
+              <div class="flow-mini-list">
+                <div><b>我的受控文件</b>：只看分发给当前角色的文件（签收状态各自不同）</div>
+                <div><b>工作台数字</b>：待审批 / 待签收 / 培训 / 申请中等角标同步变</div>
+                <div><b>培训待办</b>：只显示当前人的任务</div>
+                <div><b>打印下载申请</b>：文控看全部，其他人只看自己的</div>
+                <div><b>近 7 日生效</b>：按所属部门或数据域收窄</div>
+              </div>
+            </div>
+            <div class="flow-block">
+              <div class="flow-block-title"><span class="flow-no">7</span>审批与其它主路径</div>
+              <div class="flow-steps flow-steps-col">
+                <div class="flow-step"><em>①</em><span>工作台待办或「待我审批」</span></div>
+                <div class="flow-arrow flow-arrow-col">↓</div>
+                <div class="flow-step"><em>②</em><span>去处理 → 意见 + 电子签名</span></div>
+                <div class="flow-arrow flow-arrow-col">↓</div>
+                <div class="flow-step"><em>③</em><span>通过进下一节点；驳回回草稿</span></div>
+              </div>
+              <div class="flow-mini-list" style="margin-top:12px;">
+                <div><b>借阅/外发</b>：新建表单 → 选择文件 → 提交审批</div>
+                <div><b>作废</b>：必填原因 → 部门 → 文控 → 回收纸质</div>
+                <div><b>外来</b>：登记后需审批入库</div>
+                <div><b>合规导出</b>：选时间点 + 范围（全库/一级/二级/三级）打包下载</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="flow-legend">
+            <span><i class="lg lg-author"></i>编制人：新建/修订/作废（一二级改正文必经此）</span>
+            <span><i class="lg lg-leader"></i>部门负责人：审批签名</span>
+            <span><i class="lg lg-ctrl"></i>文控员：终审、分发、纸质、合规导出</span>
+            <span><i class="lg lg-user"></i>部门员工（行政/市场/技术/IT/财务）：本部门非密一/二/三级可直下直打；看自己的受控份与培训</span>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <!-- Doc detail drawer：操作按钮固定在 footer，避免被版本历史表格遮挡 -->
+    <el-drawer
+      v-model="docDetailVisible"
+      title="受控文件详情"
+      size="640px"
+      destroy-on-close
+      class="doc-detail-drawer"
+    >
+      <div v-if="currentDoc" class="doc-detail-body">
+        <el-descriptions :column="2" border size="small">
+          <el-descriptions-item label="文件编号">{{ currentDoc.docNo || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="文件名称">{{ currentDoc.title || '-' }}<span v-if="currentDoc.security==='SECRET'" class="sec-mi" title="机密">密</span></el-descriptions-item>
+          <el-descriptions-item label="文件级别">{{ ptName(currentDoc.productType) }}</el-descriptions-item>
+          <el-descriptions-item label="现行版本">{{ currentDoc.version }}</el-descriptions-item>
+          <el-descriptions-item label="分类">{{ currentDoc.category }}</el-descriptions-item>
+          <el-descriptions-item label="状态"><span class="tag" :class="statusTag(currentDoc.status).cls">{{ statusTag(currentDoc.status).text }}</span></el-descriptions-item>
+          <el-descriptions-item label="数据域"><span class="tag" :class="statusTag(currentDoc.accessDomain).cls">{{ statusTag(currentDoc.accessDomain).text }}</span></el-descriptions-item>
+          <el-descriptions-item label="密级"><span class="tag" :class="statusTag(currentDoc.security).cls">{{ statusTag(currentDoc.security).text }}</span></el-descriptions-item>
+          <el-descriptions-item label="文件所属部门">{{ currentDoc.ownerDept || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="编制部门">{{ currentDoc.dept }}</el-descriptions-item>
+          <el-descriptions-item label="责任人">{{ currentDoc.owner }}</el-descriptions-item>
+          <el-descriptions-item label="网页编辑">{{ isWebEditable(currentDoc) ? '三级表单可直接编辑' : '一级/二级不可网页改正文' }}</el-descriptions-item>
+          <el-descriptions-item label="生效日期"><b>{{ currentDoc.effectiveDate || '（缺失则不可生效）' }}</b></el-descriptions-item>
+          <el-descriptions-item label="下次复审">{{ currentDoc.reviewDue }}</el-descriptions-item>
+          <el-descriptions-item label="页数">{{ currentDoc.pages || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="允许下载">{{ currentDoc.allowDownload ? (isSecret(currentDoc) ? '机密须二次申请' : '本部门可直下；跨部门须申请') : '否' }}</el-descriptions-item>
+          <el-descriptions-item label="本版变更说明" :span="2">{{ currentDoc.changeSummary || '-' }}</el-descriptions-item>
+        </el-descriptions>
+        <div class="section-title" style="margin-top:16px;"><span>版本历史</span></div>
+        <el-table :data="versionRows" size="small" border class="version-history-table" style="width:100%">
+          <el-table-column label="版本" width="72"><template #default="{ row }">{{ row.ver || '-' }}</template></el-table-column>
+          <el-table-column label="状态" width="88"><template #default="{ row }">{{ row.statusText || '-' }}</template></el-table-column>
+          <el-table-column label="生效日" width="110"><template #default="{ row }">{{ row.effDate || '-' }}</template></el-table-column>
+          <el-table-column label="编制人" width="80"><template #default="{ row }">{{ row.author || '-' }}</template></el-table-column>
+              <el-table-column label="变更摘要" min-width="140" show-overflow-tooltip>
+                <template #default="{ row }">{{ row.summary || '-' }}</template>
+              </el-table-column>
+        </el-table>
+      </div>
+      <template #footer>
+        <div class="doc-detail-actions" v-if="currentDoc">
+          <el-button type="primary" @click="openPreview(currentDoc)">PDF 预览</el-button>
+          <el-button v-if="isWebEditable(currentDoc)" type="success" @click="openFormEdit(currentDoc)">编辑表单</el-button>
+          <el-button @click="mockDownload(currentDoc)">下载水印版</el-button>
+          <el-button @click="controlledPrint(currentDoc)">受控打印</el-button>
+          <el-button @click="startRevise(currentDoc)">发起修订</el-button>
+          <el-button @click="openDistForm(currentDoc)">分发</el-button>
+        </div>
+      </template>
+    </el-drawer>
+
+    <!-- 新增文件分类（仅文控） -->
+    <el-dialog v-model="categoryFormVisible" title="新增文件分类" width="480px" destroy-on-close>
+      <el-alert v-if="!isDocController" type="error" show-icon :closable="false" style="margin-bottom:12px;"
+        title="无权限：仅文控员可新增分类。"></el-alert>
+      <el-form label-position="top" :disabled="!isDocController">
+        <div class="form-grid">
+          <div class="form-item">
+            <label><span class="req">*</span>分类编码</label>
+            <el-input v-model="categoryForm.code" placeholder="如 SOP、WI、FORM（大写）" maxlength="32"></el-input>
+          </div>
+          <div class="form-item">
+            <label><span class="req">*</span>分类名称</label>
+            <el-input v-model="categoryForm.name" placeholder="如 作业指导书" maxlength="100"></el-input>
+          </div>
+          <div class="form-item">
+            <label>默认复审周期（月）</label>
+            <el-input-number v-model="categoryForm.reviewMonths" :min="1" :max="60" style="width:100%"></el-input-number>
+          </div>
+          <div class="form-item">
+            <label>默认可下载</label>
+            <el-switch v-model="categoryForm.allowDownload"></el-switch>
+          </div>
+          <div class="form-item full">
+            <label>备注</label>
+            <el-input v-model="categoryForm.remark" type="textarea" :rows="2" placeholder="可选"></el-input>
+          </div>
+        </div>
+      </el-form>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
+        <el-button @click="categoryFormVisible=false">取消</el-button>
+        <el-button type="primary" :disabled="!isDocController" @click="submitCategory">保存</el-button>
+      </div>
+    </el-dialog>
+
+    <!-- 三级表单在线编辑 -->
+    <el-dialog v-model="formEditVisible" title="编辑三级表单（保存后升版，免审批）" width="640px" destroy-on-close>
+      <p style="margin:0 0 10px;font-size:13px;color:#5c6b7a;" v-if="formEditDoc">
+        {{ formEditDoc.docNo }} · {{ formEditDoc.title }} · 当前版本 {{ formEditDoc.version || '-' }} · 所属 {{ formEditDoc.ownerDept || '-' }}
+        <br/>保存后自动升主版本（如 1.0→2.0）并写入版本历史，无需走修订审批。
+      </p>
+      <el-input v-model="formEditText" type="textarea" :rows="14" placeholder="在此编辑表单内容…"></el-input>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
+        <el-button @click="formEditVisible=false">取消</el-button>
+        <el-button type="primary" @click="saveFormEdit">保存</el-button>
+      </div>
+    </el-dialog>
+
+    <!-- Preview dialog -->
+    <el-dialog v-model="previewVisible" title="转 PDF 预览（强制水印）" width="720px" destroy-on-close>
+      <div class="preview-box">
+        <div class="wm"></div>
+        <div class="wm-text">
+          <span v-for="n in 12" :key="n">{{ data.user.name }} · {{ data.user.userNo }} · {{ currentDoc && currentDoc.docNo }} · 2026-07-22</span>
+        </div>
+        <div class="wm-status-corner" v-if="previewStatusWm.corner">{{ previewStatusWm.corner }}</div>
+        <div class="wm-status-secret" v-if="previewStatusWm.secret"><span>机密文件</span></div>
+        <div class="preview-doc">
+          <h3>{{ currentDoc && currentDoc.title || '受控文件' }}</h3>
+          <div class="meta">编号 {{ currentDoc && currentDoc.docNo }}　版本 {{ currentDoc && currentDoc.version }}　强制水印 · 禁止系统无水印打印
+            <template v-if="previewStatusWm.corner">　· {{ previewStatusWm.corner }}</template>
+          </div>
+          <p>1 目的<br/>规范相关作业流程，确保现行有效版本受控使用。</p>
+          <p>2 范围<br/>适用于本公司相关部门及岗位。</p>
+          <p>3 职责<br/>文件责任人维护内容；文控中心负责编号、分发与回收。</p>
+          <p style="color:#8c8c8c;font-size:12px;margin-top:20px;">预览为只读；打印/下载请走受控打印或二次申请。原有平铺水印保留，左上角为红色阶段水印；机密另加正中斜对角「机密文件」。</p>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px;">
+        <el-button @click="previewVisible=false">关闭</el-button>
+        <el-button @click="controlledPrint(currentDoc)">受控打印</el-button>
+        <el-button type="primary" @click="mockDownload(currentDoc)">下载水印 PDF</el-button>
+      </div>
+    </el-dialog>
+
+    <!-- Approve dialog -->
+    <el-dialog v-model="approveVisible" title="审批处理（签名 · 时间戳 · 岗位权限）" width="680px" destroy-on-close>
+      <template v-if="currentTodo">
+        <el-descriptions :column="1" size="small" border>
+          <el-descriptions-item label="文件编号">{{ currentTodo.docNo || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="文件名称">{{ currentTodo.title || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="文件级别">{{ ptName(currentTodo.productType) }}</el-descriptions-item>
+          <el-descriptions-item label="提交人">{{ currentTodo.applicant }}</el-descriptions-item>
+          <el-descriptions-item label="当前节点">{{ currentTodo.node }}</el-descriptions-item>
+          <el-descriptions-item label="审批人岗位">{{ data.user.post }} · {{ data.user.roleCode }}</el-descriptions-item>
+          <el-descriptions-item v-if="currentTodo.detail" label="摘要">{{ currentTodo.detail }}</el-descriptions-item>
+        </el-descriptions>
+        <div style="margin-top:16px;" class="section-title"><span>审批时间线</span></div>
+        <div class="timeline">
+          <div v-for="(n,i) in data.approvalTimeline" :key="i" class="tl-item" :class="n.status==='done'?'done':(n.status==='current'?'':'wait')">
+            <div class="t">{{ n.name }} · {{ n.user }} <span v-if="n.post" style="color:#909399;font-weight:400;">· {{ n.post }}</span></div>
+            <div class="d">
+              {{ n.time }}
+              <span v-if="n.signature"> · 签名 {{ n.signature }}</span>
+              <span v-if="n.roles"> · 权限 {{ n.roles }}</span>
+              <span v-if="n.comment"> · {{ n.comment }}</span>
+            </div>
+          </div>
+        </div>
+        <div style="margin-top:12px;">
+          <label style="font-size:13px;color:#595959;display:block;margin-bottom:6px;"><span class="req" style="color:#ff4d4f;">*</span> 电子签名</label>
+          <el-input v-model="approveSignature" placeholder="姓名/工号，如 周文控/MG00128" />
+        </div>
+        <el-input v-model="approveComment" type="textarea" rows="3" placeholder="审批意见（驳回必填）" style="margin-top:8px;" />
+      </template>
+      <template #footer>
+        <el-button @click="doApprove(false)">驳回</el-button>
+        <el-button type="primary" @click="doApprove(true)">签名并通过</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- Access apply dialog -->
+    <el-dialog v-model="accessApplyVisible" :title="(accessAction==='PRINT'?'打印':'下载')+'二次申请'" width="520px">
+      <div class="form-item full" style="margin-bottom:12px;">
+        <label><span class="req">*</span>选择文件</label>
+        <el-select v-model="accessDocNo" filterable clearable placeholder="请选择文件编号 / 名称" style="width:100%" @change="onAccessDocChange">
+          <el-option
+            v-for="d in effectiveDocOptions"
+            :key="d.docNo"
+            :label="d.docNo + ' ' + d.title + ' · V' + d.version"
+            :value="d.docNo"
+          ></el-option>
+        </el-select>
+      </div>
+      <div class="form-item full" style="margin-bottom:12px;">
+        <label><span class="req">*</span>用途说明</label>
+        <el-input v-model="accessReason" type="textarea" rows="3" placeholder="用途说明（必填，将留痕审计）"></el-input>
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px;">
+        <el-button @click="accessApplyVisible=false">取消</el-button>
+        <el-button type="primary" @click="submitAccessApply">提交申请</el-button>
+      </div>
+    </el-dialog>
+
+    <!-- Borrow apply dialog -->
+    <el-dialog v-model="borrowFormVisible" title="新建借阅申请" width="560px">
+      <div class="form-grid">
+        <div class="form-item full">
+          <label><span class="req">*</span>借阅文件</label>
+          <el-select v-model="borrowForm.docNo" filterable clearable placeholder="请选择文件" style="width:100%" @change="borrowForm.copyNo=''">
+            <el-option
+              v-for="d in effectiveDocOptions"
+              :key="'br-'+d.docNo"
+              :label="d.docNo + ' ' + d.title + ' · V' + d.version"
+              :value="d.docNo"
+            ></el-option>
+          </el-select>
+        </div>
+        <div class="form-item">
+          <label><span class="req">*</span>借阅类型</label>
+          <el-select v-model="borrowForm.type" style="width:100%" @change="borrowForm.copyNo=''">
+            <el-option label="电子借阅" value="ELECTRONIC"></el-option>
+            <el-option label="纸质借阅" value="HARDCOPY"></el-option>
+          </el-select>
+        </div>
+        <div class="form-item" v-if="borrowForm.type==='HARDCOPY'">
+          <label><span class="req">*</span>纸质受控号</label>
+          <el-select v-model="borrowForm.copyNo" filterable clearable placeholder="请选择纸质份" style="width:100%">
+            <el-option
+              v-for="h in hardCopyOptionsForBorrow"
+              :key="h.copyNo"
+              :label="h.copyNo + ' · ' + h.holder"
+              :value="h.copyNo"
+            ></el-option>
+          </el-select>
+        </div>
+        <div class="form-item">
+          <label><span class="req">*</span>应还日期</label>
+          <el-input v-model="borrowForm.expectReturn" placeholder="YYYY-MM-DD"></el-input>
+        </div>
+        <div class="form-item full">
+          <label><span class="req">*</span>借阅事由</label>
+          <el-input v-model="borrowForm.reason" type="textarea" rows="3" placeholder="至少 5 字"></el-input>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;">
+        <el-button @click="borrowFormVisible=false">取消</el-button>
+        <el-button type="primary" @click="submitBorrow">提交申请</el-button>
+      </div>
+    </el-dialog>
+
+    <!-- External release dialog -->
+    <el-dialog v-model="externalFormVisible" title="新建外发申请" width="560px">
+      <el-alert type="warning" show-icon :closable="false" style="margin-bottom:12px;"
+        title="外发默认禁止下载，仅水印 PDF 预览；到期令牌自动失效。"></el-alert>
+      <div class="form-grid">
+        <div class="form-item full">
+          <label><span class="req">*</span>外发文件</label>
+          <el-select v-model="externalForm.docNo" filterable clearable placeholder="请选择文件" style="width:100%">
+            <el-option
+              v-for="d in effectiveDocOptions"
+              :key="'er-'+d.docNo"
+              :label="d.docNo + ' ' + d.title + ' · V' + d.version"
+              :value="d.docNo"
+            ></el-option>
+          </el-select>
+        </div>
+        <div class="form-item">
+          <label><span class="req">*</span>接收单位</label>
+          <el-input v-model="externalForm.receiver" placeholder="客户 / 外部单位名称"></el-input>
+        </div>
+        <div class="form-item">
+          <label>联系人</label>
+          <el-input v-model="externalForm.contact" placeholder="可选"></el-input>
+        </div>
+        <div class="form-item">
+          <label><span class="req">*</span>有效期至</label>
+          <el-input v-model="externalForm.expireDate" placeholder="YYYY-MM-DD"></el-input>
+        </div>
+        <div class="form-item full">
+          <label><span class="req">*</span>外发目的</label>
+          <el-input v-model="externalForm.purpose" type="textarea" rows="3" placeholder="至少 5 字"></el-input>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;">
+        <el-button @click="externalFormVisible=false">取消</el-button>
+        <el-button type="primary" @click="submitExternal">提交申请</el-button>
+      </div>
+    </el-dialog>
+
+    <!-- Apply drawer -->
+    <el-drawer v-model="applyDrawer" :title="applyMode==='CREATE'?'新建文件申请':(applyMode==='REVISE'?'修订文件申请':'作废文件申请')" size="560px" destroy-on-close>
+      <el-form label-width="110px" label-position="top">
+        <div class="form-grid">
+          <div class="form-item full">
+            <label><span class="req">*</span>文件编号</label>
+            <el-input v-model="createForm.docNo" :placeholder="applyMode==='CREATE'?'拟编号（按规则预生成）':'受控文件编号'" :readonly="applyMode!=='CREATE'" />
+          </div>
+          <div class="form-item full">
+            <label><span class="req">*</span>文件名称</label>
+            <el-input v-model="createForm.title" placeholder="请输入文件名称" :readonly="applyMode==='OBSOLETE'" />
+          </div>
+          <div class="form-item" v-if="applyMode!=='OBSOLETE'">
+            <label><span class="req">*</span>文件级别</label>
+            <el-select v-model="createForm.productType" placeholder="请选择文件级别" style="width:100%">
+              <el-option v-for="p in data.productTypes" :key="p.code" :label="p.name" :value="p.code"></el-option>
+            </el-select>
+          </div>
+          <div class="form-item" v-if="applyMode==='OBSOLETE'">
+            <label>文件级别</label>
+            <el-input :model-value="ptName(createForm.productType)" readonly />
+          </div>
+          <div class="form-item" v-if="applyMode!=='OBSOLETE'">
+            <label><span class="req">*</span>分类</label>
+            <el-select v-model="createForm.category" style="width:100%">
+              <el-option v-for="c in data.categories" :key="c.code" :label="c.code+' '+c.name" :value="c.code"></el-option>
+            </el-select>
+          </div>
+          <div class="form-item" v-if="applyMode!=='OBSOLETE'">
+            <label><span class="req">*</span>密级</label>
+            <el-select v-model="createForm.security" placeholder="请选择密级" style="width:100%">
+              <el-option v-for="o in securityOptions" :key="'sec-'+o.value" :label="o.label" :value="o.value"></el-option>
+            </el-select>
+          </div>
+          <div class="form-item" v-if="applyMode!=='OBSOLETE'">
+            <label><span class="req">*</span>数据域</label>
+            <el-select v-model="createForm.accessDomain" placeholder="请选择数据域" style="width:100%">
+              <el-option v-for="o in domainOptions" :key="'dom-'+o.value" :label="o.label" :value="o.value"></el-option>
+            </el-select>
+          </div>
+          <div class="form-item">
+            <label><span class="req">*</span>文件所属部门</label>
+            <el-select v-model="createForm.ownerDept" placeholder="请选择所属部门" style="width:100%">
+              <el-option v-for="d in data.ownerDepts" :key="d.code" :label="d.name" :value="d.name"></el-option>
+            </el-select>
+          </div>
+          <div class="form-item">
+            <label>责任人</label>
+            <el-input v-model="createForm.owner" />
+          </div>
+          <div class="form-item full" v-if="applyMode==='CREATE'">
+            <label><span class="req">*</span>编制原因</label>
+            <el-input v-model="createForm.reason" type="textarea" rows="2" />
+          </div>
+          <div class="form-item full" v-if="applyMode==='REVISE'">
+            <label><span class="req">*</span>变更原因（≥10 字）</label>
+            <el-input v-model="createForm.changeSummary" type="textarea" rows="2" placeholder="强制必填：说明为何修订，禁止仅填「更新」" />
+          </div>
+          <div class="form-item full" v-if="applyMode==='OBSOLETE'">
+            <label><span class="req">*</span>作废原因（≥10 字）</label>
+            <el-input v-model="createForm.obsoleteReason" type="textarea" rows="2" placeholder="强制必填，否则不可提交" />
+          </div>
+          <div class="form-item" v-if="applyMode!=='OBSOLETE'">
+            <label><span class="req">*</span>确切生效日</label>
+            <el-input v-model="createForm.plannedEffectiveDate" placeholder="YYYY-MM-DD，缺失不可生效" />
+          </div>
+          <div class="form-item" v-if="applyMode!=='OBSOLETE'">
+            <label>复审周期(月)</label>
+            <el-input-number v-model="createForm.reviewCycleMonths" :min="1" :max="36" />
+          </div>
+          <div class="form-item full" v-if="applyMode!=='OBSOLETE'">
+            <label><span class="req">*</span>上传正文</label>
+            <div style="border:1px dashed #d9d9d9;border-radius:6px;padding:16px;text-align:center;">
+              <div style="color:#909399;font-size:13px;margin-bottom:8px;">支持 pdf / doc / docx / xls / xlsx（原型本地标记，不实际上传）</div>
+              <el-button type="primary" plain size="small" @click="pickUploadFile">选择附件</el-button>
+              <div v-if="createForm.fileName" style="margin-top:8px;font-size:13px;color:#1677ff;">已选：{{ createForm.fileName }}</div>
+            </div>
+          </div>
+          <div class="form-item" v-if="applyMode!=='OBSOLETE'">
+            <label>允许下载</label>
+            <el-switch v-model="createForm.allowDownload" />
+          </div>
+          <div class="form-item" v-if="applyMode!=='OBSOLETE'">
+            <label>允许受控打印</label>
+            <el-switch v-model="createForm.allowPrint" />
+          </div>
+        </div>
+      </el-form>
+      <div style="display:flex;justify-content:flex-end;gap:8px;padding:20px 0 0;">
+        <el-button @click="applyDrawer=false">取消</el-button>
+        <el-button @click="toast('已保存草稿')">保存草稿</el-button>
+        <el-button type="primary" @click="submitApply">提交审批</el-button>
+      </div>
+    </el-drawer>
+
+    <!-- Dist drawer -->
+    <el-drawer v-model="distDrawer" title="新建分发单" size="480px">
+      <el-form label-position="top">
+        <el-form-item label="文件编号">
+          <el-select v-model="distForm.docNo" filterable clearable placeholder="选择文件" style="width:100%" @change="onDistDocChange">
+            <el-option v-for="d in effectiveDocOptions" :key="'dist-'+d.docNo" :label="d.docNo+' '+d.title" :value="d.docNo"></el-option>
+          </el-select>
+        </el-form-item>
+        <el-form-item label="文件名称">
+          <el-input v-model="distForm.title" readonly />
+        </el-form-item>
+        <el-form-item label="分发对象（部门/人员，逗号分隔）">
+          <el-input v-model="distForm.targets" type="textarea" rows="2" placeholder="如：技术部,行政部,王技术" />
+        </el-form-item>
+        <el-form-item label="强制签收">
+          <el-switch v-model="distForm.requireReceipt" />
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input v-model="distForm.remark" type="textarea" rows="2" />
+        </el-form-item>
+        <div style="display:flex;justify-content:flex-end;gap:8px;">
+          <el-button @click="distDrawer=false">取消</el-button>
+          <el-button type="primary" @click="submitDistribution">发送分发</el-button>
+        </div>
+      </el-form>
+    </el-drawer>
+
+    <!-- Hard print：按钮放在内容区底部（in-DOM 下 #footer 插槽常不显示） -->
+    <el-dialog v-model="hardPrintVisible" title="受控打印（强制水印）" width="520px" destroy-on-close>
+      <el-alert type="warning" show-icon :closable="false" style="margin-bottom:12px;"
+        title="确认后将下载强制水印受控件，并登记纸质受控号；可用浏览器打开后打印/另存 PDF。"></el-alert>
+      <el-form label-width="100px">
+        <el-form-item label="文件编号"><el-input :model-value="currentDoc && currentDoc.docNo || '-'" readonly /></el-form-item>
+        <el-form-item label="文件名称"><el-input :model-value="currentDoc && currentDoc.title || '-'" readonly /></el-form-item>
+        <el-form-item label="版本"><el-input :model-value="currentDoc && currentDoc.version || '-'" readonly /></el-form-item>
+        <el-form-item label="打印份数"><el-input-number v-model="printForm.copies" :min="1" :max="20" /></el-form-item>
+        <el-form-item label="持有人"><el-input v-model="printForm.holder" /></el-form-item>
+        <el-form-item label="存放位置"><el-input v-model="printForm.location" /></el-form-item>
+        <el-form-item label="用途"><el-input v-model="printForm.purpose" type="textarea" rows="2" /></el-form-item>
+      </el-form>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px;padding-top:12px;border-top:1px solid #f0f0f0;">
+        <el-button @click="hardPrintVisible=false">取消</el-button>
+        <el-button type="primary" @click="confirmPrint">确认受控打印并下载</el-button>
+      </div>
+    </el-dialog>
+
+    <!-- 外来文件登记 -->
+    <el-drawer v-model="extDocDrawer" title="登记外来文件" size="520px" destroy-on-close>
+      <el-form label-position="top">
+        <div class="form-grid">
+          <div class="form-item full">
+            <label><span class="req">*</span>文件名称</label>
+            <el-input v-model="extForm.title" placeholder="如 GB/T xxx 或客户规范名称" />
+          </div>
+          <div class="form-item">
+            <label><span class="req">*</span>来源类型</label>
+            <el-select v-model="extForm.sourceType" style="width:100%">
+              <el-option v-for="o in sourceTypeOptions" :key="o.value" :label="o.label" :value="o.value"></el-option>
+            </el-select>
+          </div>
+          <div class="form-item">
+            <label><span class="req">*</span>密级</label>
+            <el-select v-model="extForm.security" style="width:100%">
+              <el-option v-for="o in securityOptions" :key="'ext-'+o.value" :label="o.label" :value="o.value"></el-option>
+            </el-select>
+          </div>
+          <div class="form-item full">
+            <label><span class="req">*</span>来源单位</label>
+            <el-input v-model="extForm.sourceOrg" placeholder="国家标准委 / 客户名称等" />
+          </div>
+          <div class="form-item">
+            <label><span class="req">*</span>接收日</label>
+            <el-input v-model="extForm.receiveDate" placeholder="YYYY-MM-DD" />
+          </div>
+          <div class="form-item">
+            <label>失效日</label>
+            <el-input v-model="extForm.expireDate" placeholder="YYYY-MM-DD" />
+          </div>
+          <div class="form-item">
+            <label>责任人</label>
+            <el-input v-model="extForm.owner" />
+          </div>
+          <div class="form-item full">
+            <label>备注</label>
+            <el-input v-model="extForm.remark" type="textarea" rows="2" placeholder="存放位置、用途说明等" />
+          </div>
+        </div>
+      </el-form>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;">
+        <el-button @click="extDocDrawer=false">取消</el-button>
+        <el-button type="primary" @click="submitExtDoc">提交登记</el-button>
+      </div>
+    </el-drawer>
+
+    <!-- 审批模板节点配置 -->
+    <el-drawer v-model="tplDrawer" :title="'配置节点 · ' + (currentTpl && currentTpl.name || '')" size="480px" destroy-on-close>
+      <p style="font-size:13px;color:#595959;margin:0 0 12px;" v-if="currentTpl">
+        模板编码 <b>{{ currentTpl.code }}</b>：按顺序配置审批人角色/岗位节点，末节点为终审。
+      </p>
+      <div v-for="(n, idx) in tplNodes" :key="idx" style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">
+        <span style="width:28px;color:#909399;">{{ idx + 1 }}</span>
+        <el-input v-model="n.name" placeholder="节点名称，如 部门负责人" />
+        <el-button @click="removeTplNode(idx)" :disabled="tplNodes.length<=1">删除</el-button>
+      </div>
+      <el-button @click="addTplNode" style="margin-bottom:16px;">新增节点</el-button>
+      <div style="display:flex;justify-content:flex-end;gap:8px;">
+        <el-button @click="tplDrawer=false">取消</el-button>
+        <el-button type="primary" @click="saveTplConfig">保存</el-button>
+      </div>
+    </el-drawer>
+
+      <!-- Receipt detail -->
+      <el-dialog v-model="receiptDetailVisible" :title="'签收明细 · '+currentDistNo" width="560px">
+        <el-table :data="currentReceiptRows" size="small" border stripe>
+          <el-table-column label="人员" width="100"><template #default="{ row }">{{ row.user || '-' }}</template></el-table-column>
+          <el-table-column label="部门" width="120"><template #default="{ row }">{{ row.dept || '-' }}</template></el-table-column>
+          <el-table-column label="状态" width="100">
+            <template #default="{ row }"><span class="tag" :class="statusTag(row.status).cls">{{ statusTag(row.status).text }}</span></template>
+          </el-table-column>
+          <el-table-column label="签收时间" min-width="120"><template #default="{ row }">{{ row.time || '-' }}</template></el-table-column>
+        </el-table>
+      </el-dialog>
+
+      <!-- 纸质份详情 -->
+      <el-dialog v-model="hardDetailVisible" title="纸质受控份详情" width="560px" destroy-on-close>
+        <template v-if="currentHard">
+          <el-descriptions :column="2" border size="small">
+            <el-descriptions-item label="纸质受控号" :span="2">{{ currentHard.copyNo || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="文件编号">{{ currentHard.docNo || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="文件名称">{{ currentHard.title || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="版本">{{ currentHard.version || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="状态">
+              <span class="tag" :class="statusTag(currentHard.status).cls">{{ statusTag(currentHard.status).text }}</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="持有人/组">{{ currentHard.holder || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="存放位置">{{ currentHard.location || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="打印人">{{ currentHard.printedBy || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="打印日期">{{ currentHard.printedAt || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="回收原因" :span="2">{{ currentHard.recycleReason || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="处理方式">{{ currentHard.recycleAction || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="处理人">{{ currentHard.recycledBy || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="处理时间" :span="2">{{ currentHard.recycledAt || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="处理备注" :span="2">{{ currentHard.recycleRemark || '-' }}</el-descriptions-item>
+          </el-descriptions>
+          <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;">
+            <el-button @click="hardDetailVisible=false">关闭</el-button>
+            <el-button
+              v-if="currentHard.status==='RECYCLE_PENDING' || currentHard.status==='IN_USE'"
+              type="danger"
+              @click="openRecycle(currentHard)"
+            >去回收</el-button>
+            <el-button type="primary" @click="openDocByNo(currentHard.docNo)">查看文件</el-button>
+          </div>
+        </template>
+      </el-dialog>
+
+      <!-- 纸质份回收（按钮放内容区，避免 in-DOM #footer 不显示） -->
+      <el-dialog v-model="recycleVisible" title="纸质受控份回收" width="520px" destroy-on-close>
+        <template v-if="currentHard">
+          <p style="font-size:13px;margin:0 0 12px;line-height:1.7;">
+            受控号 <b>{{ currentHard.copyNo }}</b><br/>
+            文件 {{ currentHard.docNo }} · {{ currentHard.title || '' }} · 版本 {{ currentHard.version }}<br/>
+            持有：{{ currentHard.holder }} / {{ currentHard.location }}
+            <template v-if="currentHard.recycleReason"><br/>待回收原因：{{ currentHard.recycleReason }}</template>
+          </p>
+          <el-alert type="warning" :closable="false" show-icon style="margin-bottom:12px;"
+            title="处理结果会写入台账并刷新待回收数量；关联变更单的回收进度会同步更新。"></el-alert>
+          <div class="form-item full">
+            <label>处理备注（可选）</label>
+            <el-input v-model="recycleForm.remark" type="textarea" :rows="2" placeholder="如：实物已交回文控柜 / 现场已盖作废章拍照留存"></el-input>
+          </div>
+          <div style="display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;margin-top:16px;">
+            <el-button @click="recycleVisible=false">取消</el-button>
+            <el-button @click="finishRecycle('LOST')">登记丢失</el-button>
+            <el-button @click="finishRecycle('VOID')">盖作废章留存</el-button>
+            <el-button type="primary" @click="finishRecycle('RECYCLE')">实物回收</el-button>
+          </div>
+        </template>
+      </el-dialog>
+  </div>
+
+  <!-- 国内用 npmmirror；原 jsDelivr 常超时，Vue 未加载时页面会显示 {{ }}，看起来像乱码 -->
+  <script src="https://registry.npmmirror.com/vue/3.5.13/files/dist/vue.global.prod.js"></script>
+  <script src="https://registry.npmmirror.com/element-plus/2.9.0/files/dist/index.full.min.js"></script>
+  <script src="./assets/js/data.js" charset="utf-8"></script>
+  <script src="./assets/js/app.js" charset="utf-8"></script>
+</body>
+</html>

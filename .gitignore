@@ -1,0 +1,11 @@
+.idea/
+node_modules/
+web/node_modules/
+dist/
+web/dist/
+*.local
+.DS_Store
+Thumbs.db
+*.log
+.env
+.env.*
