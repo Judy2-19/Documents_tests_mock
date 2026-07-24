@@ -17,7 +17,8 @@ export default defineComponent({
         <div class="page-card">
           <div class="toolbar">
             <div class="left">
-              <el-button type="primary" @click="openExtDocForm">登记外来文件</el-button>
+              <el-button v-if="canRegisterExtDoc" type="primary" @click="openExtDocForm">登记外来文件</el-button>
+              <span v-else style="color:#909399;font-size:13px;">仅文控或部门负责人可登记外来文件</span>
             </div>
           </div>
           <el-table :data="pageSlice(data.externalDocs,'externalDocs')" size="small" stripe border>
@@ -35,6 +36,9 @@ export default defineComponent({
             <el-table-column label="状态" width="90">
               <template #default="{ row }"><span class="tag" :class="statusTag(row.status).cls">{{ statusTag(row.status).text }}</span></template>
             </el-table-column>
+            <el-table-column label="附件" min-width="140" show-overflow-tooltip>
+              <template #default="{ row }">{{ row.fileName || '-' }}</template>
+            </el-table-column>
             <el-table-column label="接收日" width="110"><template #default="{ row }">{{ row.receiveDate || '-' }}</template></el-table-column>
             <el-table-column label="失效日" width="110"><template #default="{ row }">{{ row.expireDate || '-' }}</template></el-table-column>
             <el-table-column label="来源单位" min-width="140"><template #default="{ row }">{{ row.sourceOrg || '-' }}</template></el-table-column>
@@ -42,7 +46,7 @@ export default defineComponent({
             <el-table-column label="操作" width="72" fixed="right" align="center" class-name="ops-col" label-class-name="ops-col">
               <template #default="{ row }">
                 <div class="ops-cell">
-                <button class="link-btn" @click="openPreview({title:row.title, docNo:row.extNo, version:'-'})">预览</button>
+                <button class="link-btn" @click="openPreview({title:row.title, docNo:row.extNo, version:'-', fileUrl:row.fileUrl})">预览</button>
                 </div>
               </template>
             </el-table-column>
@@ -52,3 +56,4 @@ export default defineComponent({
           </div>
         </div>
 </template>
+

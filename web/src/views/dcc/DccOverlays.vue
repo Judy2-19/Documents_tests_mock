@@ -328,11 +328,13 @@ export default defineComponent({
 
 <!-- Borrow apply dialog -->
 <el-dialog v-model="borrowFormVisible" title="新建借阅申请" width="560px">
+  <el-alert type="info" show-icon :closable="false" style="margin-bottom:12px;"
+    title="借阅用于临时预览「非本人受控、非本部门所属」的现行文件：部门初审→文控终审；通过后可预览，可提前归还，到期自动收回。" />
   <div class="form-grid">
     <div class="form-item full">
       <label><span class="req">*</span>文件编号</label>
-      <el-select v-model="borrowForm.docNo" filterable clearable placeholder="输入编号检索并选择" style="width:100%" @change="onBorrowDocChange">
-        <el-option v-for="d in effectiveDocOptions" :key="'br-no-'+d.docNo" :label="d.docNo" :value="d.docNo">
+      <el-select v-model="borrowForm.docNo" filterable clearable placeholder="跨部门现行文件（不含本人已签收/本部门所属）" style="width:100%" @change="onBorrowDocChange">
+        <el-option v-for="d in borrowDocOptions" :key="'br-no-'+d.docNo" :label="d.docNo" :value="d.docNo">
           <span>{{ d.docNo }}</span>
           <span style="color:#909399;margin-left:8px;font-size:12px;">{{ d.title }}</span>
         </el-option>
@@ -341,7 +343,7 @@ export default defineComponent({
     <div class="form-item full">
       <label><span class="req">*</span>文件名称</label>
       <el-select v-model="borrowForm.docNo" filterable clearable placeholder="输入名称检索并选择（自动关联编号）" style="width:100%" @change="onBorrowDocChange">
-        <el-option v-for="d in effectiveDocOptions" :key="'br-tt-'+d.docNo" :label="d.title" :value="d.docNo">
+        <el-option v-for="d in borrowDocOptions" :key="'br-tt-'+d.docNo" :label="d.title" :value="d.docNo">
           <span>{{ d.title }}</span>
           <span style="color:#909399;margin-left:8px;font-size:12px;">{{ d.docNo }}</span>
         </el-option>
@@ -366,8 +368,12 @@ export default defineComponent({
       </el-select>
     </div>
     <div class="form-item">
+      <label><span class="req">*</span>借阅天数</label>
+      <el-input-number v-model="borrowForm.days" :min="1" :max="90" style="width:100%" @change="syncBorrowExpectReturn" />
+    </div>
+    <div class="form-item">
       <label><span class="req">*</span>应还日期</label>
-      <el-input v-model="borrowForm.expectReturn" placeholder="YYYY-MM-DD"></el-input>
+      <el-input v-model="borrowForm.expectReturn" readonly placeholder="由借阅天数自动生成"></el-input>
     </div>
     <div class="form-item full">
       <label><span class="req">*</span>借阅事由</label>
@@ -383,12 +389,12 @@ export default defineComponent({
 <!-- External release dialog -->
 <el-dialog v-model="externalFormVisible" title="新建外发申请" width="560px">
   <el-alert type="warning" show-icon :closable="false" style="margin-bottom:12px;"
-    title="外发默认禁止下载，仅水印 PDF 预览；到期令牌自动失效。"></el-alert>
+    title="仅文控或部门负责人可发起；负责人须选「我的受控文件」内文件。审批通过后生成访问令牌与专用水印包，可复制链接发给外部人员；到期令牌自动失效。"></el-alert>
   <div class="form-grid">
     <div class="form-item full">
       <label><span class="req">*</span>文件编号</label>
       <el-select v-model="externalForm.docNo" filterable clearable placeholder="输入编号检索并选择" style="width:100%" @change="onExternalDocChange">
-        <el-option v-for="d in effectiveDocOptions" :key="'er-no-'+d.docNo" :label="d.docNo" :value="d.docNo">
+        <el-option v-for="d in externalDocOptions" :key="'er-no-'+d.docNo" :label="d.docNo" :value="d.docNo">
           <span>{{ d.docNo }}</span>
           <span style="color:#909399;margin-left:8px;font-size:12px;">{{ d.title }}</span>
         </el-option>
@@ -397,7 +403,7 @@ export default defineComponent({
     <div class="form-item full">
       <label><span class="req">*</span>文件名称</label>
       <el-select v-model="externalForm.docNo" filterable clearable placeholder="输入名称检索并选择（自动关联编号）" style="width:100%" @change="onExternalDocChange">
-        <el-option v-for="d in effectiveDocOptions" :key="'er-tt-'+d.docNo" :label="d.title" :value="d.docNo">
+        <el-option v-for="d in externalDocOptions" :key="'er-tt-'+d.docNo" :label="d.title" :value="d.docNo">
           <span>{{ d.title }}</span>
           <span style="color:#909399;margin-left:8px;font-size:12px;">{{ d.docNo }}</span>
         </el-option>
@@ -547,9 +553,12 @@ export default defineComponent({
       <div class="form-item full" v-if="applyMode!=='OBSOLETE'">
         <label><span class="req">*</span>上传正文</label>
         <div style="border:1px dashed #d9d9d9;border-radius:6px;padding:16px;text-align:center;">
-          <div style="color:#909399;font-size:13px;margin-bottom:8px;">支持 pdf / doc / docx / xls / xlsx（原型本地标记，不实际上传）</div>
+          <div style="color:#909399;font-size:13px;margin-bottom:8px;">支持 pdf / doc / docx / xls / xlsx（本地实装选择，存于浏览器内存）</div>
           <el-button type="primary" plain size="small" @click="pickUploadFile">选择附件</el-button>
-          <div v-if="createForm.fileName" style="margin-top:8px;font-size:13px;color:#1677ff;">已选：{{ createForm.fileName }}</div>
+          <div v-if="createForm.fileName" style="margin-top:8px;font-size:13px;color:#1677ff;">
+            已选：{{ createForm.fileName }}
+            <span v-if="createForm.fileSize" style="color:#909399;margin-left:6px;">（{{ formatFileSize(createForm.fileSize) }}）</span>
+          </div>
         </div>
       </div>
       <div class="form-item" v-if="applyMode!=='OBSOLETE'">
@@ -667,6 +676,15 @@ export default defineComponent({
         <el-input v-model="extForm.owner" />
       </div>
       <div class="form-item full">
+        <label><span class="req">*</span>上传附件</label>
+        <div style="color:#909399;font-size:13px;margin-bottom:8px;">支持 pdf / doc / docx / xls / xlsx</div>
+        <el-button type="primary" plain size="small" @click="pickExtDocFile">选择附件</el-button>
+        <div v-if="extForm.fileName" style="margin-top:8px;font-size:13px;color:#1677ff;">
+          已选：{{ extForm.fileName }}
+          <span v-if="extForm.fileSize" style="color:#909399;margin-left:6px;">（{{ formatFileSize(extForm.fileSize) }}）</span>
+        </div>
+      </div>
+      <div class="form-item full">
         <label>备注</label>
         <el-input v-model="extForm.remark" type="textarea" rows="2" placeholder="存放位置、用途说明等" />
       </div>
@@ -732,17 +750,26 @@ export default defineComponent({
       <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;">
         <el-button @click="hardDetailVisible=false">关闭</el-button>
         <el-button
-          v-if="(currentHard.status==='RECYCLE_PENDING' || currentHard.status==='IN_USE') && canRecycleHardCopy(currentHard)"
+          v-if="currentHard.status==='RECYCLE_PENDING' && canRecycleHardCopy(currentHard)"
           type="danger"
           @click="openRecycle(currentHard)"
         >去回收</el-button>
-        <el-button type="primary" @click="openDocByNo(currentHard.docNo)">查看文件</el-button>
+        <el-button
+          v-if="currentHard.status==='RECYCLED' && canVoidStampHardCopy(currentHard)"
+          type="warning"
+          @click="openVoidStamp(currentHard)"
+        >盖废章</el-button>
+        <el-button
+          type="primary"
+          :disabled="isHardcopyAccessRevoked(currentHard) && !isDocController"
+          @click="openHardcopyLinkedDoc(currentHard)"
+        >查看文件</el-button>
       </div>
     </template>
   </el-dialog>
 
-  <!-- 纸质份回收（按钮放内容区，避免 in-DOM #footer 不显示） -->
-  <el-dialog v-model="recycleVisible" title="纸质受控份回收" width="520px" destroy-on-close>
+  <!-- 第一步：实物回收（仅待回收） -->
+  <el-dialog v-model="recycleVisible" title="纸质受控份 · 实物回收" width="520px" destroy-on-close>
     <template v-if="currentHard">
       <p style="font-size:13px;margin:0 0 12px;line-height:1.7;">
         受控号 <b>{{ currentHard.copyNo }}</b><br/>
@@ -751,16 +778,36 @@ export default defineComponent({
         <template v-if="currentHard.recycleReason"><br/>待回收原因：{{ currentHard.recycleReason }}</template>
       </p>
       <el-alert type="warning" :closable="false" show-icon style="margin-bottom:12px;"
-        title="处理结果会写入台账并刷新待回收数量；关联变更单的回收进度会同步更新。"></el-alert>
+        title="第一步仅登记实物回收。回收完成后，再在列表点「盖废章」办理第二步；两步不可合并。"></el-alert>
       <div class="form-item full">
         <label>处理备注（可选）</label>
-        <el-input v-model="recycleForm.remark" type="textarea" :rows="2" placeholder="如：实物已交回文控柜 / 现场已盖作废章拍照留存"></el-input>
+        <el-input v-model="recycleForm.remark" type="textarea" :rows="2" placeholder="如：实物已交回文控柜 A-2"></el-input>
       </div>
       <div style="display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;margin-top:16px;">
         <el-button @click="recycleVisible=false">取消</el-button>
         <el-button v-if="isDocController" type="danger" plain @click="finishRecycle('LOST')">丢失确认（仅文控）</el-button>
-        <el-button @click="finishRecycle('VOID')">盖作废章留存</el-button>
-        <el-button type="primary" @click="finishRecycle('RECYCLE')">实物回收</el-button>
+        <el-button type="primary" @click="finishRecycle('RECYCLE')">确认实物回收</el-button>
+      </div>
+    </template>
+  </el-dialog>
+
+  <!-- 第二步：盖作废章（仅已回收） -->
+  <el-dialog v-model="voidStampVisible" title="纸质受控份 · 盖作废章" width="520px" destroy-on-close>
+    <template v-if="currentHard">
+      <p style="font-size:13px;margin:0 0 12px;line-height:1.7;">
+        受控号 <b>{{ currentHard.copyNo }}</b><br/>
+        文件 {{ currentHard.docNo }} · {{ currentHard.title || '' }} · 版本 {{ currentHard.version }}<br/>
+        实物回收：{{ currentHard.recycledBy || '-' }} · {{ currentHard.recycledAt || '-' }}
+      </p>
+      <el-alert type="info" :closable="false" show-icon style="margin-bottom:12px;"
+        title="第二步：在已实物回收的纸质份上盖作废章留存。盖章后非文控不可再预览/下载/打印该版本。"></el-alert>
+      <div class="form-item full">
+        <label>盖章备注（可选）</label>
+        <el-input v-model="recycleForm.remark" type="textarea" :rows="2" placeholder="如：已盖作废章并拍照归档"></el-input>
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;">
+        <el-button @click="voidStampVisible=false">取消</el-button>
+        <el-button type="warning" @click="finishVoidStamp">确认盖作废章</el-button>
       </div>
     </template>
   </el-dialog>

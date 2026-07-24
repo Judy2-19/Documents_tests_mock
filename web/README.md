@@ -1,6 +1,6 @@
 # DCC 文控 · Vue 前端（可点测）
 
-**Vite + Vue 3.5 + TypeScript 5.3 + Element Plus + Vue Router**。业务逻辑在 `composables/dccApp.js`，页面在 `views/dcc/`（按侧栏分组），路由模块 `router/modules/dcc.js` 可直接给公司主路由 / 若依引用。需求基线 **V1.5.9**（§19.8～§19.9）。原型已对齐：`fileLevel` + 业务领域双字段；三级表单保存为轻量修订 `rN`；文件级别列宽 150px。
+**Vite + Vue 3.5 + TypeScript 5.3 + Element Plus + Vue Router**。业务逻辑在 `composables/dccApp.js`，页面在 `views/dcc/`（按侧栏分组），路由模块 `router/modules/dcc.js` 可直接给公司主路由 / 若依引用。需求基线 **V1.5.18**（§8.8～§8.11 / §19.8～§19.9）。原型已对齐：借阅跨部门预览、外发令牌/水印包、外来附件、纸质两步回收与筛选、附件实装；双字段 + 三级轻量修订 `rN`。
 
 ## 启动
 

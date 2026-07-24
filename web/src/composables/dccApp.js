@@ -211,6 +211,7 @@ export function createDccSetup() {
       purpose: "现场受控张贴",
     });
     const recycleVisible = ref(false);
+    const voidStampVisible = ref(false);
     const hardDetailVisible = ref(false);
     const currentHard = ref(null);
     const recycleForm = reactive({ remark: "" });
@@ -227,6 +228,9 @@ export function createDccSetup() {
       owner: data.user.name,
       security: "INTERNAL",
       remark: "",
+      fileName: "",
+      fileSize: 0,
+      fileUrl: "",
     });
     const receiptDetailVisible = ref(false);
     const currentReceiptRows = ref([]);
@@ -242,6 +246,7 @@ export function createDccSetup() {
       title: "",
       type: "ELECTRONIC",
       copyNo: "",
+      days: 7,
       expectReturn: "",
       reason: "",
     });
@@ -262,7 +267,7 @@ export function createDccSetup() {
       if (isCtrl) {
         return data.documents.filter((d) => d.status === "EFFECTIVE");
       }
-      // 非文控：仅可选已签收文件（申请修订/作废/借阅等）
+      // 非文控：仅可选已签收文件（申请修订/作废等）
       const received = (data.myDocs || []).filter(
         (row) =>
           row.receiptStatus === "RECEIVED" &&
@@ -271,6 +276,35 @@ export function createDccSetup() {
       const nos = new Set(received.map((x) => x.docNo));
       return data.documents.filter((d) => d.status === "EFFECTIVE" && nos.has(d.docNo));
     });
+
+    /** 借阅可选：非本人已签收、非本部门所属的现行文件（跨部门临时预览） */
+    const borrowDocOptions = computed(() => {
+      const code = roleCode.value;
+      const dept = data.user.dept || "";
+      return data.documents.filter((d) => {
+        if (d.status !== "EFFECTIVE") return false;
+        if (codeIsCtrl(code)) return true;
+        if (userHasReceived(d.docNo)) return false;
+        if (csvHas(d.ownerDept || d.dept, dept)) return false;
+        return true;
+      });
+    });
+
+    /** 外发可选：文控全库现行；负责人仅「我的受控文件」内 */
+    const externalDocOptions = computed(() => {
+      const code = roleCode.value;
+      if (codeIsCtrl(code)) {
+        return data.documents.filter((d) => d.status === "EFFECTIVE");
+      }
+      if (codeIsLeader(code)) {
+        const nos = new Set(roleMyDocs.value.map((m) => m.docNo));
+        return data.documents.filter((d) => d.status === "EFFECTIVE" && nos.has(d.docNo));
+      }
+      return [];
+    });
+
+    const canCreateExternal = computed(() => codeIsCtrl(roleCode.value) || codeIsLeader(roleCode.value));
+    const canRegisterExtDoc = computed(() => codeIsCtrl(roleCode.value) || codeIsLeader(roleCode.value));
 
     const hardCopyOptionsForBorrow = computed(() => {
       if (!borrowForm.docNo) return [];
@@ -312,6 +346,19 @@ export function createDccSetup() {
       { label: "已替代", value: "SUPERSEDED" },
       { label: "已废止", value: "OBSOLETE" },
     ];
+    const hardCopyStatusOptions = [
+      { label: "在用", value: "IN_USE" },
+      { label: "待回收", value: "RECYCLE_PENDING" },
+      { label: "已回收", value: "RECYCLED" },
+      { label: "已盖作废章", value: "VOID_STAMPED" },
+      { label: "已丢失确认", value: "LOST_CONFIRMED" },
+    ];
+    const hardCopyFilters = reactive({
+      fileId: "",
+      docNo: "",
+      title: "",
+      status: "",
+    });
     const sourceTypeOptions = [
       { label: "标准", value: "STANDARD" },
       { label: "客户", value: "CUSTOMER" },
@@ -343,6 +390,8 @@ export function createDccSetup() {
       baseDocNo: "",
       obsoleteReason: "",
       fileName: "",
+      fileSize: 0,
+      fileUrl: "",
       targetVersion: "",
     });
 
@@ -469,6 +518,7 @@ export function createDccSetup() {
       if (!row) return;
       if (row.status === "REVOKED") return toast("该外链已撤销");
       row.status = "REVOKED";
+      row.tokenActive = false;
       toast("已撤销外链：" + (row.releaseNo || "") + "，令牌立即失效");
     };
 
@@ -590,9 +640,68 @@ export function createDccSetup() {
       navigate("distributions");
     };
 
+    /** 本地真实选择附件（内存 Blob URL，无后端） */
+    const pickLocalFile = (assignFn, opts = {}) => {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept =
+        opts.accept ||
+        ".pdf,.doc,.docx,.xls,.xlsx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+      input.onchange = () => {
+        const file = input.files && input.files[0];
+        if (!file) return;
+        if (opts.maxMb && file.size > opts.maxMb * 1024 * 1024) {
+          return warn(`附件大小不能超过 ${opts.maxMb}MB`);
+        }
+        const prevUrl = opts.prevUrl;
+        if (prevUrl && String(prevUrl).indexOf("blob:") === 0) {
+          try {
+            URL.revokeObjectURL(prevUrl);
+          } catch (_) {
+            /* ignore */
+          }
+        }
+        const url = URL.createObjectURL(file);
+        assignFn({
+          fileName: file.name,
+          fileSize: file.size,
+          fileType: file.type || "",
+          fileUrl: url,
+          fileBlob: file,
+        });
+        const kb = (file.size / 1024).toFixed(1);
+        toast(`已上传附件：${file.name}（${kb} KB）`);
+      };
+      input.click();
+    };
+
+    const formatFileSize = (n) => {
+      const size = Number(n) || 0;
+      if (size < 1024) return size + " B";
+      if (size < 1024 * 1024) return (size / 1024).toFixed(1) + " KB";
+      return (size / (1024 * 1024)).toFixed(2) + " MB";
+    };
+
     const pickUploadFile = () => {
-      createForm.fileName = (createForm.docNo || "附件") + "_正文.pdf";
-      toast("已选择附件：" + createForm.fileName);
+      pickLocalFile(
+        (meta) => {
+          createForm.fileName = meta.fileName;
+          createForm.fileSize = meta.fileSize;
+          createForm.fileUrl = meta.fileUrl;
+        },
+        { prevUrl: createForm.fileUrl, maxMb: 50 }
+      );
+    };
+
+    const pickExtDocFile = () => {
+      pickLocalFile(
+        (meta) => {
+          extForm.fileName = meta.fileName;
+          extForm.fileSize = meta.fileSize;
+          extForm.fileUrl = meta.fileUrl;
+        },
+        { prevUrl: extForm.fileUrl, maxMb: 50 }
+      );
     };
 
     const currentRole = computed(() => data.demoRoles.find((r) => r.roleCode === roleCode.value) || data.demoRoles[0]);
@@ -623,7 +732,7 @@ export function createDccSetup() {
     };
     const leaderRoleForDept = (dept) => LEADER_ROLE_BY_DEPT[dept] || "DCC_CONTROLLER";
 
-    /** 演示「今天」：用于待生效→现行、复审顺延 */
+    /** 演示「今天」：用于待生效→现行、复审顺延、借阅/外发到期 */
     const demoToday = () => "2026-07-24";
     const addMonthsYmd = (ymd, months) => {
       const d = new Date(String(ymd || demoToday()) + "T00:00:00");
@@ -632,6 +741,19 @@ export function createDccSetup() {
       const m = String(d.getMonth() + 1).padStart(2, "0");
       const day = String(d.getDate()).padStart(2, "0");
       return `${y}-${m}-${day}`;
+    };
+    const addDaysYmd = (ymd, days) => {
+      const d = new Date(String(ymd || demoToday()) + "T00:00:00");
+      d.setDate(d.getDate() + Number(days || 0));
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${y}-${m}-${day}`;
+    };
+    const syncBorrowExpectReturn = () => {
+      const days = Math.max(1, Number(borrowForm.days) || 7);
+      borrowForm.days = days;
+      borrowForm.expectReturn = addDaysYmd(demoToday(), days);
     };
 
     /** 文控→各部门负责人；负责人→本部门员工；员工不可分发 */
@@ -1471,6 +1593,49 @@ export function createDccSetup() {
       () => data.hardCopies.filter((h) => h.status === "RECYCLE_PENDING").length
     );
 
+    const filteredHardCopies = computed(() => {
+      const fid = String(hardCopyFilters.fileId || "").trim();
+      const no = String(hardCopyFilters.docNo || "").trim().toUpperCase();
+      const title = String(hardCopyFilters.title || "").trim().toLowerCase();
+      const st = hardCopyFilters.status || "";
+      return (data.hardCopies || []).filter((h) => {
+        if (fid) {
+          const idStr = String(fileIdOf(h));
+          if (idStr === "-" || idStr.indexOf(fid) < 0) return false;
+        }
+        if (no) {
+          const docNo = String(h.docNo || "").toUpperCase();
+          if (docNo.indexOf(no) < 0) return false;
+        }
+        if (title) {
+          const t = String(h.title || "").toLowerCase();
+          if (t.indexOf(title) < 0) return false;
+        }
+        if (st && h.status !== st) return false;
+        return true;
+      });
+    });
+
+    const resetHardCopyFilters = () => {
+      hardCopyFilters.fileId = "";
+      hardCopyFilters.docNo = "";
+      hardCopyFilters.title = "";
+      hardCopyFilters.status = "";
+      listPage.hardCopies = 1;
+    };
+
+    watch(
+      () => [
+        hardCopyFilters.fileId,
+        hardCopyFilters.docNo,
+        hardCopyFilters.title,
+        hardCopyFilters.status,
+      ],
+      () => {
+        listPage.hardCopies = 1;
+      }
+    );
+
     const openDistDetail = (row) => {
       currentDistNo.value = row.distNo;
       currentReceiptRows.value =
@@ -1489,6 +1654,21 @@ export function createDccSetup() {
     const hasMyDocFullAccess = (doc) => {
       if (!doc || !doc.docNo) return false;
       return userHasReceived(doc.docNo);
+    };
+
+    /** 借阅通过且未到期：仅授予预览 */
+    const hasActiveBorrowPreview = (docNo) => {
+      if (!docNo) return false;
+      const name = data.user.name;
+      const today = demoToday();
+      return (data.borrows || []).some(
+        (b) =>
+          b.docNo === docNo &&
+          b.applicant === name &&
+          b.status === "BORROWED" &&
+          b.expectReturn &&
+          String(b.expectReturn) >= today
+      );
     };
 
     const assertDocAccessible = (doc, actionLabel) => {
@@ -1510,14 +1690,32 @@ export function createDccSetup() {
         ElMessage.error("文件待生效，仅文控可见");
         return false;
       }
+      // 非现行：该版本纸质份已全部回收/盖废章后，除文控外收回预览下载打印
+      if (!codeIsCtrl(roleCode.value) && doc.status !== "EFFECTIVE") {
+        const ver = doc.version;
+        const copies = (data.hardCopies || []).filter(
+          (h) => h.docNo === doc.docNo && (!ver || !h.version || String(h.version) === String(ver))
+        );
+        if (
+          copies.length &&
+          copies.every((h) => ["RECYCLED", "VOID_STAMPED", "LOST", "LOST_CONFIRMED"].includes(h.status))
+        ) {
+          ElMessage.error(
+            "该版本纸质份已全部回收，除文控外不可" + (actionLabel || "访问")
+          );
+          return false;
+        }
+      }
       // 文控 / 已签收「我的受控文件」：完整操作权限
       if (codeIsCtrl(roleCode.value) || hasMyDocFullAccess(doc)) return true;
       // 台账侧：本部门非密可直接预览/下载/打印
       if (canDeptDirectAccess(doc)) return true;
+      // 借阅授权：仅预览
+      if (actionLabel === "预览" && hasActiveBorrowPreview(doc.docNo)) return true;
       // 预览不可越权；下载/打印交给后续二次申请
       if (actionLabel === "预览") {
         ElMessage.error(
-          "台账仅可预览本部门非密文件；跨部门或机密请待分发签收后在「我的受控文件」中预览"
+          "台账仅可预览本部门非密文件；跨部门请走「借阅申请」审批通过后临时预览，或待分发签收后在「我的受控文件」中预览"
         );
         return false;
       }
@@ -1526,7 +1724,10 @@ export function createDccSetup() {
 
     const openPreview = (row, scene) => {
       const doc = resolveDocMeta(row || currentDoc.value);
-      if (doc && !domainVisible(doc) && doc.docNo) {
+      const borrowOk =
+        (scene === "BORROW" || hasActiveBorrowPreview(doc && doc.docNo)) &&
+        hasActiveBorrowPreview(doc && doc.docNo);
+      if (doc && !domainVisible(doc) && doc.docNo && !borrowOk && scene !== "EXTERNAL") {
         ElMessage.error("无预览权限（数据域限制）");
         return;
       }
@@ -1662,6 +1863,7 @@ export function createDccSetup() {
         if (todo.id != null && t.id === todo.id) return true;
         if (todo.applyId != null && t.applyId === todo.applyId && t.bizType === todo.bizType) return true;
         if (todo.bizType === "EXTERNAL" || todo.releaseId != null) return false;
+        if (todo.bizType === "BORROW" || todo.borrowId != null) return false;
         if (todo.bizType === "ACCESS") return false;
         return !!(todo.docNo && t.docNo === todo.docNo);
       });
@@ -1817,6 +2019,27 @@ export function createDccSetup() {
       syncApplyPublishedOnActivate(doc);
     };
 
+    /** 借阅到期收回预览；外发到期令牌失效 */
+    const expireBorrowsAndExternals = () => {
+      const today = demoToday();
+      (data.borrows || []).forEach((b) => {
+        if ((b.status === "BORROWED" || b.status === "OVERDUE") && b.expectReturn && String(b.expectReturn) < today) {
+          b.status = "EXPIRED";
+          b.previewGranted = false;
+        }
+      });
+      (data.externals || []).forEach((e) => {
+        if (
+          (e.status === "APPROVED" || e.status === "ACTIVE") &&
+          e.expireDate &&
+          String(e.expireDate) < today
+        ) {
+          e.status = "EXPIRED";
+          e.tokenActive = false;
+        }
+      });
+    };
+
     /** 扫描待生效：到达计划生效日 → 现行有效（文控方可分发） */
     const activateDueDocuments = () => {
       const today = demoToday();
@@ -1825,6 +2048,7 @@ export function createDccSetup() {
         const ped = doc.plannedEffectiveDate || doc.effectiveDate;
         if (ped && String(ped) <= today) activatePendingDoc(doc);
       });
+      expireBorrowsAndExternals();
     };
 
     /** 新建/修订/作废终审或文控直办后落库 */
@@ -1862,6 +2086,9 @@ export function createDccSetup() {
             effectiveDate: planned,
             allowDownload: true,
             allowPrint: true,
+            fileName: apply.fileName || "",
+            fileSize: apply.fileSize || 0,
+            fileUrl: apply.fileUrl || "",
           };
           data.documents.unshift(doc);
         } else {
@@ -1870,6 +2097,11 @@ export function createDccSetup() {
           doc.plannedEffectiveDate = planned;
           doc.effectiveDate = planned;
           doc.fileId = doc.fileId != null ? doc.fileId : fid;
+          if (apply.fileName) {
+            doc.fileName = apply.fileName;
+            doc.fileSize = apply.fileSize || 0;
+            doc.fileUrl = apply.fileUrl || "";
+          }
         }
         if (String(planned) <= today) {
           activatePendingDoc(doc);
@@ -1905,6 +2137,9 @@ export function createDccSetup() {
           allowDownload: true,
           allowPrint: true,
           changeSummary: apply.reason || "",
+          fileName: apply.fileName || "",
+          fileSize: apply.fileSize || 0,
+          fileUrl: apply.fileUrl || "",
         };
         data.documents.unshift(newDoc);
         if (oldDoc && oldDoc.status === "EFFECTIVE") {
@@ -2114,7 +2349,96 @@ export function createDccSetup() {
         return;
       }
 
-      // 外发等其它待办：在当前弹窗时间线上追加一条
+      // 借阅：员工→负责人初审→文控终审；负责人提交直接文控
+      if (todo && todo.bizType === "BORROW" && todo.borrowId != null) {
+        const br = data.borrows.find((b) => b.id === todo.borrowId);
+        const step = todo.borrowStep || "DEPT";
+        if (!pass) {
+          if (br) br.status = "REJECTED";
+          removeTodoMatch(todo);
+          syncRoleStats();
+          approveVisible.value = false;
+          currentTodo.value = null;
+          toast("已驳回借阅申请 · 签名已留痕");
+          if (route.value !== "todoApprove") navigate("todoApprove");
+          return;
+        }
+        if (step === "DEPT") {
+          removeTodoMatch(todo);
+          data.todos.unshift({
+            id: Date.now(),
+            borrowId: todo.borrowId,
+            bizType: "BORROW",
+            borrowStep: "CTRL",
+            docNo: todo.docNo,
+            title: todo.title,
+            fileLevel: todo.fileLevel,
+            productType: todo.productType,
+            applicant: todo.applicant,
+            applicantDept: todo.applicantDept,
+            node: "文控审核（借阅终审）",
+            time: now,
+            detail: (todo.detail || "") + `；部门负责人 ${data.user.name} 已通过，转文控终审`,
+            forRoles: ["DCC_CONTROLLER", "DCC_ADMIN"],
+          });
+          syncRoleStats();
+          approveVisible.value = false;
+          currentTodo.value = null;
+          toast(`借阅部门初审已通过 · 已转文控终审 · ${approveSignature.value}`);
+          if (route.value !== "todoApprove") navigate("todoApprove");
+          return;
+        }
+        if (br) {
+          br.status = "BORROWED";
+          br.previewGranted = true;
+          br.approvedAt = now;
+          br.approvedBy = data.user.name;
+        }
+        removeTodoMatch(todo);
+        syncRoleStats();
+        approveVisible.value = false;
+        currentTodo.value = null;
+        toast(`借阅终审通过 · 申请人已获临时预览权至 ${br && br.expectReturn ? br.expectReturn : "-"} · ${approveSignature.value}`);
+        if (route.value !== "todoApprove") navigate("todoApprove");
+        return;
+      }
+
+      // 外发：通过后生成访问令牌与专用水印包
+      if (todo && (todo.bizType === "EXTERNAL" || todo.releaseId != null)) {
+        const fallTl = activeApprovalTimeline.value.slice();
+        fallTl.push({
+          name: todo && todo.node ? String(todo.node).replace(/（.*）/, "") || "审批" : "审批",
+          user: data.user.name,
+          time: now,
+          status: "done",
+          comment: approveComment.value || (pass ? "同意" : "驳回"),
+          signature: approveSignature.value,
+          post: data.user.post,
+          roles: `${data.user.roleCode},dcc:approve`,
+        });
+        syncTimelineView(fallTl);
+        const ext = data.externals.find((e) => e.id === todo.releaseId);
+        if (!pass) {
+          if (ext) ext.status = "REJECTED";
+          removeTodoMatch(todo);
+          syncRoleStats();
+          approveVisible.value = false;
+          currentTodo.value = null;
+          toast("已驳回外发申请 · 签名已留痕");
+          if (route.value !== "todoApprove") navigate("todoApprove");
+          return;
+        }
+        if (ext) activateExternalRelease(ext);
+        removeTodoMatch(todo);
+        syncRoleStats();
+        approveVisible.value = false;
+        currentTodo.value = null;
+        toast(`外发已批准 · 已生成访问令牌与专用水印包 · ${approveSignature.value}`);
+        if (route.value !== "todoApprove") navigate("todoApprove");
+        return;
+      }
+
+      // 其它待办：在当前弹窗时间线上追加一条
       const fallTl = activeApprovalTimeline.value.slice();
       fallTl.push({
         name: todo && todo.node ? String(todo.node).replace(/（.*）/, "") || "审批" : "审批",
@@ -2131,10 +2455,7 @@ export function createDccSetup() {
       removeTodoMatch(todo);
       syncRoleStats();
 
-      if (todo && todo.releaseId != null) {
-        const ext = data.externals.find((e) => e.id === todo.releaseId);
-        if (ext) ext.status = pass ? "APPROVED" : "REJECTED";
-      } else if (todo && todo.applyId != null) {
+      if (todo && todo.applyId != null) {
         const apply = data.applies.find((a) => a.id === todo.applyId);
         if (apply) apply.status = pass ? "APPROVED" : "REJECTED";
       } else if (todo && todo.id != null) {
@@ -2149,7 +2470,7 @@ export function createDccSetup() {
           ? `审批已通过 · 签名 ${approveSignature.value} · ${now}`
           : `已驳回 · 签名已留痕`
       );
-      if (todo && todo.bizType !== "EXTERNAL" && todo.releaseId == null && route.value !== "todoApprove") {
+      if (route.value !== "todoApprove") {
         navigate("todoApprove");
       }
     };
@@ -2276,6 +2597,8 @@ export function createDccSetup() {
         baseDocNo: "",
         obsoleteReason: "",
         fileName: "",
+        fileSize: 0,
+        fileUrl: "",
         targetVersion: mode === "CREATE" ? "1.0" : "",
       });
     };
@@ -2311,6 +2634,8 @@ export function createDccSetup() {
         baseDocNo: baseNo,
         obsoleteReason: "",
         fileName: "",
+        fileSize: 0,
+        fileUrl: "",
         targetVersion: mode === "REVISE" ? nextMajor : "-",
       });
     };
@@ -2405,6 +2730,12 @@ export function createDccSetup() {
         createForm.baseDocNo = createForm.docNo;
         if (!createForm.obsoleteReason.trim() || createForm.obsoleteReason.trim().length < 10) return warn("作废原因必填（至少 10 字）");
       }
+      if (
+        (applyMode.value === "CREATE" || applyMode.value === "REVISE") &&
+        !String(createForm.fileName || "").trim()
+      ) {
+        return warn("请上传正文附件（支持 pdf / doc / docx / xls / xlsx）");
+      }
 
       const now = new Date().toISOString().slice(0, 19).replace("T", " ");
       const applyId = Date.now();
@@ -2447,6 +2778,9 @@ export function createDccSetup() {
         targetVersion: applyMode.value === "CREATE" ? "1.0" : applyMode.value === "REVISE" ? "2.0" : "-",
         reason,
         plannedEffectiveDate: createForm.plannedEffectiveDate || "",
+        fileName: createForm.fileName || "",
+        fileSize: createForm.fileSize || 0,
+        fileUrl: createForm.fileUrl || "",
       };
       data.applies.unshift(applyRow);
 
@@ -2587,24 +2921,92 @@ export function createDccSetup() {
       hardDetailVisible.value = true;
     };
 
-    /** 纸质回收：仅曾签收过该文件的人员可操作 */
-    const canRecycleHardCopy = (row) => {
+    const HARDCOPY_TERMINAL = ["RECYCLED", "VOID_STAMPED", "LOST", "LOST_CONFIRMED"];
+
+    /** 是否有权处理该纸质份（文控 / 曾签收含历史 / 持有人部门或本人） */
+    const canHandleHardCopy = (row) => {
       if (!row || !row.docNo) return false;
-      return userHasReceived(row.docNo);
+      if (codeIsCtrl(roleCode.value)) return true;
+      if (myEverDocNos.value.has(row.docNo)) return true;
+      if (userHasReceived(row.docNo)) return true;
+      const name = data.user.name || "";
+      const dept = data.user.dept || "";
+      if (row.printedBy && row.printedBy === name) return true;
+      if (row.holder) {
+        const h = String(row.holder);
+        if (h === name || h === dept || (dept && h.indexOf(dept) >= 0)) return true;
+      }
+      return false;
+    };
+
+    /** 第一步：待回收 → 实物回收（在用不可回收） */
+    const canRecycleHardCopy = (row) => {
+      if (!row || row.status !== "RECYCLE_PENDING") return false;
+      return canHandleHardCopy(row);
+    };
+
+    /** 第二步：已回收 → 盖作废章（须先完成实物回收） */
+    const canVoidStampHardCopy = (row) => {
+      if (!row || row.status !== "RECYCLED") return false;
+      return canHandleHardCopy(row);
+    };
+
+    /** 已回收/盖废章/丢失的纸质份：非文控不可再预览下载打印对应文件 */
+    const isHardcopyAccessRevoked = (row) => {
+      if (!row) return false;
+      return HARDCOPY_TERMINAL.includes(row.status);
+    };
+
+    const openHardcopyLinkedDoc = (row) => {
+      if (!row || !row.docNo) return warn("未选择纸质份");
+      if (isHardcopyAccessRevoked(row) && !codeIsCtrl(roleCode.value)) {
+        return warn("该纸质份已回收/作废，除文控外不可再预览、下载或打印");
+      }
+      const doc =
+        data.documents.find(
+          (d) => d.docNo === row.docNo && (!row.version || d.version === row.version)
+        ) || data.documents.find((d) => d.docNo === row.docNo);
+      if (!doc) return warn("未找到文件：" + row.docNo);
+      if (!assertDocAccessible(doc, "预览")) return;
+      hardDetailVisible.value = false;
+      openDoc(doc);
     };
 
     const openRecycle = (row) => {
       if (!row) return warn("未选择纸质份");
-      if (["RECYCLED", "VOID_STAMPED", "LOST", "LOST_CONFIRMED"].includes(row.status)) {
-        return warn("该纸质份已处理完毕，无需再回收");
+      if (row.status === "IN_USE") {
+        return warn("「在用」纸质份无需回收；仅「待回收」可办理实物回收");
+      }
+      if (HARDCOPY_TERMINAL.includes(row.status) && row.status !== "RECYCLED") {
+        return warn("该纸质份已处理完毕");
+      }
+      if (row.status === "RECYCLED") {
+        return openVoidStamp(row);
+      }
+      if (row.status !== "RECYCLE_PENDING") {
+        return warn("仅「待回收」状态可办理实物回收");
       }
       if (!canRecycleHardCopy(row)) {
-        return warn("仅曾签收过该文件的人员可执行纸质回收");
+        return warn("无权回收：须为文控，或曾签收/持有该文件的人员");
       }
       currentHard.value = row;
       recycleForm.remark = "";
       hardDetailVisible.value = false;
       recycleVisible.value = true;
+    };
+
+    const openVoidStamp = (row) => {
+      if (!row) return warn("未选择纸质份");
+      if (row.status !== "RECYCLED") {
+        return warn("须先完成「实物回收」，再办理盖作废章（两步不可合并）");
+      }
+      if (!canVoidStampHardCopy(row)) {
+        return warn("无权盖作废章：须为文控，或曾签收/持有该文件的人员");
+      }
+      currentHard.value = row;
+      recycleForm.remark = "";
+      hardDetailVisible.value = false;
+      voidStampVisible.value = true;
     };
 
     const finishRecycle = (action) => {
@@ -2616,9 +3018,21 @@ export function createDccSetup() {
         recycleVisible.value = false;
         return warn("未选择纸质份");
       }
-      if (!canRecycleHardCopy(row)) {
+      if (action === "VOID") {
         recycleVisible.value = false;
-        return warn("仅曾签收过该文件的人员可执行纸质回收");
+        return warn("盖作废章须在实物回收完成后单独办理");
+      }
+      if (row.status !== "RECYCLE_PENDING") {
+        recycleVisible.value = false;
+        return warn("仅「待回收」可办理实物回收或丢失确认");
+      }
+      if (!canRecycleHardCopy(row) && action !== "LOST") {
+        recycleVisible.value = false;
+        return warn("无权执行纸质回收");
+      }
+      if (action === "LOST" && !codeIsCtrl(roleCode.value)) {
+        recycleVisible.value = false;
+        return warn("丢失确认仅文控可登记");
       }
       const target = data.hardCopies.find((h) => h.id === row.id || h.copyNo === row.copyNo);
       if (!target) {
@@ -2628,25 +3042,54 @@ export function createDccSetup() {
       const now = new Date().toISOString().slice(0, 19).replace("T", " ");
       const remark = (recycleForm.remark || "").trim();
       let nextStatus = "RECYCLED";
-      let msg = "已登记实物回收";
-      if (action === "VOID") {
-        nextStatus = "VOID_STAMPED";
-        msg = "已登记盖作废章留存";
-      } else if (action === "LOST") {
+      let msg = "已登记实物回收；如需盖作废章，请再点「盖废章」";
+      if (action === "LOST") {
         nextStatus = "LOST_CONFIRMED";
         msg = "已登记丢失确认";
       }
       target.status = nextStatus;
       target.recycledAt = now;
       target.recycledBy = data.user.name;
-      target.recycleAction =
-        action === "VOID" ? "盖作废章留存" : action === "LOST" ? "丢失确认" : "实物回收";
+      target.recycleAction = action === "LOST" ? "丢失确认" : "实物回收";
       target.recycleRemark = remark || target.recycleReason || "";
       refreshChangeRecycleProgress(target.docNo);
       syncHardRecycleStats();
       recycleVisible.value = false;
       currentHard.value = target;
       toast(msg + "：" + target.copyNo);
+    };
+
+    const finishVoidStamp = () => {
+      const row = currentHard.value;
+      if (!row) {
+        voidStampVisible.value = false;
+        return warn("未选择纸质份");
+      }
+      if (row.status !== "RECYCLED") {
+        voidStampVisible.value = false;
+        return warn("须先完成实物回收，再盖作废章");
+      }
+      if (!canVoidStampHardCopy(row)) {
+        voidStampVisible.value = false;
+        return warn("无权盖作废章");
+      }
+      const target = data.hardCopies.find((h) => h.id === row.id || h.copyNo === row.copyNo);
+      if (!target) {
+        voidStampVisible.value = false;
+        return warn("未找到纸质份记录");
+      }
+      const now = new Date().toISOString().slice(0, 19).replace("T", " ");
+      const remark = (recycleForm.remark || "").trim();
+      target.status = "VOID_STAMPED";
+      target.voidStampedAt = now;
+      target.voidStampedBy = data.user.name;
+      target.recycleAction = "实物回收 → 盖作废章留存";
+      if (remark) target.recycleRemark = (target.recycleRemark ? target.recycleRemark + "；" : "") + remark;
+      refreshChangeRecycleProgress(target.docNo);
+      syncHardRecycleStats();
+      voidStampVisible.value = false;
+      currentHard.value = target;
+      toast("已盖作废章留存：" + target.copyNo);
     };
 
     const requestAccess = (row, action) => {
@@ -2744,25 +3187,40 @@ export function createDccSetup() {
         title: "",
         type: "ELECTRONIC",
         copyNo: "",
+        days: 7,
         expectReturn: "",
         reason: "",
       });
+      syncBorrowExpectReturn();
       borrowFormVisible.value = true;
     };
 
     const submitBorrow = () => {
       if (!borrowForm.docNo) return warn("请选择借阅文件");
-      if (!borrowForm.expectReturn) return warn("请填写应还日期");
+      syncBorrowExpectReturn();
+      if (!borrowForm.expectReturn) return warn("请填写借阅天数以生成应还日期");
       if (!borrowForm.reason.trim() || borrowForm.reason.trim().length < 5) return warn("请填写借阅事由（至少 5 字）");
       if (borrowForm.type === "HARDCOPY" && !borrowForm.copyNo) {
         return warn("纸质借阅请选择纸质受控号");
       }
       const doc = data.documents.find((d) => d.docNo === borrowForm.docNo);
       if (!doc) return warn("文件不存在");
+      if (!codeIsCtrl(roleCode.value)) {
+        if (userHasReceived(doc.docNo)) {
+          return warn("该文件已在您的「我的受控文件」中，无需借阅");
+        }
+        if (csvHas(doc.ownerDept || doc.dept, data.user.dept)) {
+          return warn("本部门所属文件请走分发签收，无需借阅；借阅用于跨部门临时预览");
+        }
+      }
+      const code = roleCode.value;
+      const applicantDept = data.user.dept || "";
+      const now = new Date().toISOString().slice(0, 16).replace("T", " ");
       const id = Date.now();
-      data.borrows.unshift({
+      const borrowNo = "BR" + String(id).slice(-10);
+      const row = {
         id,
-        borrowNo: "BR" + String(id).slice(-10),
+        borrowNo,
         docNo: doc.docNo,
         title: doc.title,
         fileLevel: doc.fileLevel,
@@ -2770,29 +3228,164 @@ export function createDccSetup() {
         type: borrowForm.type,
         copyNo: borrowForm.type === "HARDCOPY" ? borrowForm.copyNo : "",
         applicant: data.user.name,
-        dept: data.user.dept,
+        dept: applicantDept,
+        days: borrowForm.days,
         expectReturn: borrowForm.expectReturn,
         status: "IN_APPROVAL",
         reason: borrowForm.reason.trim(),
+        previewGranted: false,
+      };
+
+      // 文控直办：直接借阅中
+      if (codeIsCtrl(code)) {
+        row.status = "BORROWED";
+        row.previewGranted = true;
+        row.approvedAt = now;
+        row.approvedBy = data.user.name;
+        data.borrows.unshift(row);
+        borrowFormVisible.value = false;
+        toast(`借阅已直办通过：${borrowNo}，可预览至 ${row.expectReturn}`);
+        navigate("borrows");
+        return;
+      }
+
+      data.borrows.unshift(row);
+      const leaderOnly = codeIsLeader(code);
+      const leaderRole = leaderRoleForDept(applicantDept);
+      const firstRoles = leaderOnly ? ["DCC_CONTROLLER", "DCC_ADMIN"] : [leaderRole];
+      const firstNode = leaderOnly ? "文控审核（借阅终审）" : `部门负责人初审（${applicantDept}）`;
+      const firstStep = leaderOnly ? "CTRL" : "DEPT";
+      data.todos.unshift({
+        id: id + 1,
+        borrowId: id,
+        bizType: "BORROW",
+        borrowStep: firstStep,
+        docNo: doc.docNo,
+        title: doc.title,
+        fileLevel: doc.fileLevel,
+        productType: doc.productType,
+        applicant: `${data.user.name} / ${applicantDept}`,
+        applicantDept,
+        node: firstNode,
+        time: now,
+        detail: `借阅 ${borrowNo}；${borrowForm.days} 天，应还 ${borrowForm.expectReturn}；${borrowForm.reason.trim()}`,
+        forRoles: firstRoles,
       });
+      syncRoleStats();
       borrowFormVisible.value = false;
-      toast("借阅申请已提交，待部门→文控审批");
+      toast(
+        leaderOnly
+          ? `借阅已提交 → 请切「文控员」在「待我审批」终审（${borrowNo}）`
+          : `借阅已提交 → 请切「${applicantDept}负责人」初审，再文控终审（${borrowNo}）`
+      );
       navigate("borrows");
     };
 
+    const returnBorrow = (row) => {
+      if (!row) return;
+      if (row.status !== "BORROWED" && row.status !== "OVERDUE") {
+        return warn("仅「借阅中/已逾期」可归还");
+      }
+      const isOwner = row.applicant === data.user.name;
+      if (!isOwner && !codeIsCtrl(roleCode.value)) {
+        return warn("仅借阅人或文控可办理归还");
+      }
+      row.status = "RETURNED";
+      row.previewGranted = false;
+      row.returnedAt = demoToday();
+      toast(`已归还 ${row.borrowNo || ""}，预览权限已收回`);
+    };
+
+    const activateExternalRelease = (ext) => {
+      if (!ext) return;
+      const token =
+        ext.accessToken ||
+        "EXT-" + Math.random().toString(36).slice(2, 10).toUpperCase() + String(Date.now()).slice(-4);
+      const origin = typeof window !== "undefined" ? window.location.origin : "";
+      const path = typeof window !== "undefined" ? window.location.pathname : "/";
+      ext.status = "APPROVED";
+      ext.tokenActive = true;
+      ext.accessToken = token;
+      ext.accessLink = `${origin}${path}#/dcc/external-view?token=${token}`;
+      ext.watermarkPackName = `${ext.releaseNo || "ER"}_专用水印包.pdf`;
+      ext.approvedAt = new Date().toISOString().slice(0, 16).replace("T", " ");
+      ext.approvedBy = data.user.name;
+    };
+
+    const copyExternalLink = async (row) => {
+      if (!row || !row.accessLink) return warn("尚无外链（需审批通过后生成）");
+      if (row.status === "REVOKED" || row.status === "EXPIRED" || row.tokenActive === false) {
+        return warn("外链已失效，无法复制");
+      }
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(row.accessLink);
+        } else {
+          const ta = document.createElement("textarea");
+          ta.value = row.accessLink;
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand("copy");
+          document.body.removeChild(ta);
+        }
+        toast("外发访问链接已复制");
+      } catch (_) {
+        warn("复制失败，请手动复制：" + row.accessLink);
+      }
+    };
+
+    const downloadExternalWatermarkPack = (row) => {
+      if (!row) return;
+      if (row.status !== "APPROVED" && row.status !== "ACTIVE") {
+        return warn("仅已批准的外发可下载专用水印包");
+      }
+      if (row.tokenActive === false || row.status === "REVOKED" || row.status === "EXPIRED") {
+        return warn("外发已失效，水印包不可用");
+      }
+      const lines = [
+        "米格实验室 DCC 外发专用水印包（演示）",
+        `外发单号：${row.releaseNo || "-"}`,
+        `文件编号：${row.docNo || "-"}`,
+        `文件名称：${row.title || "-"}`,
+        `版本：${row.version || "-"}`,
+        `接收单位：${row.receiver || "-"}`,
+        `有效期至：${row.expireDate || "-"}`,
+        `访问令牌：${row.accessToken || "-"}`,
+        `外链：${row.accessLink || "-"}`,
+        `水印：外发·${row.receiver || ""}·${row.accessToken || ""}·禁止下载`,
+        `生成时间：${row.approvedAt || demoToday()}`,
+      ];
+      const blob = new Blob([lines.join("\n")], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = row.watermarkPackName || `${row.releaseNo || "ER"}_专用水印包.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      toast("已下载专用水印包（演示 PDF 文本包）");
+    };
+
     const openExternalForm = () => {
+      if (!canCreateExternal.value) {
+        return warn("仅文控或部门负责人可新建外发（负责人须在「我的受控文件」内选择文件）");
+      }
       Object.assign(externalForm, {
         docNo: "",
         title: "",
         receiver: "",
         contact: "",
-        expireDate: "",
+        expireDate: addDaysYmd(demoToday(), 30),
         purpose: "",
       });
       externalFormVisible.value = true;
     };
 
     const submitExternal = () => {
+      if (!canCreateExternal.value) {
+        return warn("仅文控或部门负责人可新建外发");
+      }
       if (!externalForm.docNo) return warn("请选择外发文件");
       if (!externalForm.receiver.trim()) return warn("请填写接收单位");
       if (!externalForm.expireDate) return warn("请填写外发有效期");
@@ -2801,10 +3394,15 @@ export function createDccSetup() {
       }
       const doc = data.documents.find((d) => d.docNo === externalForm.docNo);
       if (!doc) return warn("文件不存在");
+      if (codeIsLeader(roleCode.value) && !userHasReceived(doc.docNo)) {
+        return warn("负责人仅可外发本人「我的受控文件」内已签收文件");
+      }
       const id = Date.now();
-      data.externals.unshift({
+      const now = new Date().toISOString().slice(0, 16).replace("T", " ");
+      const releaseNo = "ER" + String(id).slice(-10);
+      const row = {
         id,
-        releaseNo: "ER" + String(id).slice(-10),
+        releaseNo,
         docNo: doc.docNo,
         title: doc.title,
         version: doc.version,
@@ -2816,7 +3414,24 @@ export function createDccSetup() {
         status: "IN_APPROVAL",
         applicant: data.user.name,
         purpose: externalForm.purpose.trim(),
-      });
+        tokenActive: false,
+        accessToken: "",
+        accessLink: "",
+        watermarkPackName: "",
+      };
+
+      // 文控提交：直接批准并生成令牌
+      if (codeIsCtrl(roleCode.value)) {
+        data.externals.unshift(row);
+        activateExternalRelease(row);
+        syncRoleStats();
+        externalFormVisible.value = false;
+        toast(`外发已直办：${releaseNo}，令牌 ${row.accessToken}`);
+        navigate("externalReleases");
+        return;
+      }
+
+      data.externals.unshift(row);
       data.todos.unshift({
         id: id + 1,
         bizType: "EXTERNAL",
@@ -2826,14 +3441,14 @@ export function createDccSetup() {
         fileLevel: doc.fileLevel,
         productType: doc.productType,
         applicant: `${data.user.name} / ${data.user.dept}`,
-        node: "文控审核（终审）",
-        time: new Date().toISOString().slice(0, 16).replace("T", " "),
+        node: "文控审核（外发）",
+        time: now,
         detail: `外发申请 ${externalForm.receiver.trim()}；有效期至 ${externalForm.expireDate}`,
-        forRoles: ["DCC_CONTROLLER"],
+        forRoles: ["DCC_CONTROLLER", "DCC_ADMIN"],
       });
       syncRoleStats();
       externalFormVisible.value = false;
-      toast("外发申请已提交，待审批");
+      toast(`外发申请已提交 → 请切「文控员」在「待我审批」处理（${releaseNo}）`);
       navigate("externalReleases");
     };
 
@@ -3762,23 +4377,33 @@ h1{text-align:center}
     };
 
     const openExtDocForm = () => {
+      if (!canRegisterExtDoc.value) {
+        return warn("仅文控或部门负责人可登记外来文件");
+      }
       Object.assign(extForm, {
         title: "",
         sourceType: "STANDARD",
         sourceOrg: "",
-        receiveDate: "2026-07-22",
+        receiveDate: demoToday(),
         expireDate: "2027-12-31",
         owner: data.user.name,
         security: "INTERNAL",
         remark: "",
+        fileName: "",
+        fileSize: 0,
+        fileUrl: "",
       });
       extDocDrawer.value = true;
     };
 
     const submitExtDoc = () => {
+      if (!canRegisterExtDoc.value) {
+        return warn("仅文控或部门负责人可登记外来文件");
+      }
       if (!extForm.title.trim()) return warn("请填写文件名称");
       if (!extForm.sourceOrg.trim()) return warn("请填写来源单位");
       if (!extForm.receiveDate) return warn("请填写接收日");
+      if (!String(extForm.fileName || "").trim()) return warn("请上传外来文件附件");
       const prefix = extForm.sourceType === "CUSTOMER" ? "MG-EXT-CUS" : "MG-EXT-STD";
       const seq = String(data.externalDocs.length + 1).padStart(4, "0");
       const year = (extForm.receiveDate || "2026").slice(0, 4);
@@ -3796,10 +4421,13 @@ h1{text-align:center}
         owner: extForm.owner || data.user.name,
         security: extForm.security,
         remark: extForm.remark || "本月登记",
+        fileName: extForm.fileName,
+        fileSize: extForm.fileSize || 0,
+        fileUrl: extForm.fileUrl || "",
       };
       data.externalDocs.unshift(row);
       extDocDrawer.value = false;
-      toast(`外来文件已登记：${row.extNo} ${row.title}`);
+      toast(`外来文件已登记：${row.extNo} ${row.title}（附件 ${row.fileName}）`);
       navigate("externalDocs");
     };
 
@@ -3881,10 +4509,15 @@ h1{text-align:center}
       onExternalDocChange,
       submitDistribution,
       pickUploadFile,
+      pickExtDocFile,
+      formatFileSize,
       hasPerm,
       hasMyDocFullAccess,
+      hasActiveBorrowPreview,
       userHasReceived,
       isDocController,
+      canCreateExternal,
+      canRegisterExtDoc,
       categoryFormVisible,
       categoryForm,
       openCategoryForm,
@@ -3915,6 +4548,9 @@ h1{text-align:center}
       previewScene,
       previewStatusWm,
       effectiveDocOptions,
+      borrowDocOptions,
+      externalDocOptions,
+      syncBorrowExpectReturn,
       openAccessApply,
       onAccessDocChange,
       requestAccess,
@@ -3924,10 +4560,14 @@ h1{text-align:center}
       hardCopyOptionsForBorrow,
       openBorrowForm,
       submitBorrow,
+      returnBorrow,
       externalFormVisible,
       externalForm,
       openExternalForm,
       submitExternal,
+      copyExternalLink,
+      downloadExternalWatermarkPack,
+      activateExternalRelease,
       approveComment,
       approveSignature,
       exportForm,
@@ -3964,6 +4604,10 @@ h1{text-align:center}
       securityOptions,
       domainOptions,
       statusOptions,
+      hardCopyStatusOptions,
+      hardCopyFilters,
+      filteredHardCopies,
+      resetHardCopyFilters,
       sourceTypeOptions,
       exportScopeOptions,
       extDocDrawer,
@@ -4027,8 +4671,14 @@ h1{text-align:center}
       keepReviewRow,
       activateDueDocuments,
       canRecycleHardCopy,
+      canVoidStampHardCopy,
+      isHardcopyAccessRevoked,
+      openHardcopyLinkedDoc,
       openRecycle,
+      openVoidStamp,
       finishRecycle,
+      finishVoidStamp,
+      voidStampVisible,
       mockDownload,
       toast,
       PAGE_TITLES,

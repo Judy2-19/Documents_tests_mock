@@ -237,6 +237,9 @@ const DCC_DATA = {
     { id: 16, docNo: "MG-FORM-2025-0009", title: "培训签到表（旧版）", version: "1.0", receiptStatus: "PENDING", distDate: "2026-07-10", distNo: "DF20260710009", forRoles: ["DCC_DEPT_FIN", "DCC_LEADER_FIN"] },
     { id: 13, docNo: "MG-TECH-2026-0002", title: "ICP 重金属检测方法（内部）", version: "1.0", receiptStatus: "RECEIVED", distDate: "2026-06-02", distNo: "DF20260602001", forRoles: ["DCC_DEPT_TECH", "DCC_LEADER_TECH"] },
     { id: 7, docNo: "MG-SOP-2026-0015", title: "客户投诉处理作业指导书", version: "1.0", receiptStatus: "RECEIVED", distDate: "2026-06-19", distNo: "DF20260619001", forRoles: ["DCC_DEPT_MKT", "DCC_LEADER_MKT"] },
+    /** 待回收纸质份关联：曾签收旧版，便于「待回收」出现回收按钮 */
+    { id: 30, docNo: "MG-SOP-2025-0021", title: "危化品贮存管理规定", version: "1.0", receiptStatus: "RECEIVED", distDate: "2025-11-02", distNo: "DF20251102001", forRoles: ["DCC_CONTROLLER", "DCC_DEPT_TECH", "DCC_LEADER_TECH"] },
+    { id: 31, docNo: "MG-SOP-2026-0019", title: "检测报告编制与签发", version: "1.0", receiptStatus: "RECEIVED", distDate: "2025-02-14", distNo: "DF20250214001", forRoles: ["DCC_CONTROLLER", "DCC_DEPT_MKT", "DCC_LEADER_MKT"] },
   ],
 
   applies: [
@@ -290,11 +293,11 @@ const DCC_DATA = {
       title: "质量手册",
       fileLevel: "L1",
       productType: "COMMON",
-      applicant: "陈华 / 市场部",
-      node: "文控审核（终审）",
+      applicant: "吴市场负责人 / 市场部",
+      node: "文控审核（外发）",
       time: "2026-07-21 11:00",
       detail: "外发客户A；强制水印链接",
-      forRoles: ["DCC_CONTROLLER"],
+      forRoles: ["DCC_CONTROLLER", "DCC_ADMIN"],
     },
     {
       id: 3,
@@ -431,25 +434,25 @@ const DCC_DATA = {
   ],
 
   borrows: [
-    { id: 1, borrowNo: "BR20260720001", docNo: "MG-QM-2026-0001", title: "质量手册", type: "ELECTRONIC", applicant: "李市场", dept: "市场部", expectReturn: "2026-07-27", status: "BORROWED", reason: "客户A二方审核准备材料" },
-    { id: 2, borrowNo: "BR20260715002", docNo: "MG-SOP-2026-0008", title: "实验室样品接收作业指导书", type: "HARDCOPY", applicant: "王技术", dept: "技术部", expectReturn: "2026-07-22", status: "OVERDUE", reason: "新员工岗前培训纸质讲义", copyNo: "HC-SOP-2026-0008-02" },
-    { id: 3, borrowNo: "BR20260718003", docNo: "MG-TECH-2026-0002", title: "ICP 重金属检测方法（内部）", type: "ELECTRONIC", applicant: "周技术负责人", dept: "技术部", expectReturn: "2026-07-25", status: "BORROWED", reason: "方法验证对照阅读（禁止下载）" },
-    { id: 4, borrowNo: "BR20260705004", docNo: "MG-SOP-2026-0002", title: "文件控制程序", type: "ELECTRONIC", applicant: "赵IT", dept: "IT部", expectReturn: "2026-07-12", status: "RETURNED", reason: "内审员培训" },
+    { id: 1, borrowNo: "BR20260720001", docNo: "MG-QM-2026-0001", title: "质量手册", type: "ELECTRONIC", applicant: "李市场", dept: "市场部", days: 7, expectReturn: "2026-07-27", status: "BORROWED", previewGranted: true, reason: "客户A二方审核准备材料" },
+    { id: 2, borrowNo: "BR20260715002", docNo: "MG-SOP-2026-0008", title: "实验室样品接收作业指导书", type: "HARDCOPY", applicant: "王技术", dept: "技术部", days: 7, expectReturn: "2026-07-22", status: "EXPIRED", previewGranted: false, reason: "新员工岗前培训纸质讲义", copyNo: "HC-SOP-2026-0008-02" },
+    { id: 3, borrowNo: "BR20260718003", docNo: "MG-TECH-2026-0002", title: "ICP 重金属检测方法（内部）", type: "ELECTRONIC", applicant: "周技术负责人", dept: "技术部", days: 7, expectReturn: "2026-07-25", status: "BORROWED", previewGranted: true, reason: "方法验证对照阅读（禁止下载）" },
+    { id: 4, borrowNo: "BR20260705004", docNo: "MG-SOP-2026-0002", title: "文件控制程序", type: "ELECTRONIC", applicant: "赵IT", dept: "IT部", days: 7, expectReturn: "2026-07-12", status: "RETURNED", previewGranted: false, reason: "内审员培训" },
   ],
 
   externals: [
-    { id: 1, releaseNo: "ER20260721001", docNo: "MG-QM-2026-0001", title: "质量手册", version: "3.0", receiver: "客户A科技有限公司", contact: "采购部-林女士", expireDate: "2026-08-21", status: "IN_APPROVAL", applicant: "李市场", purpose: "供应商审核资料包" },
-    { id: 2, releaseNo: "ER20260601002", docNo: "MG-SOP-2026-0015", title: "客户投诉处理作业指导书", version: "1.0", receiver: "客户B检测中心", contact: "行政部-韩工", expireDate: "2026-07-01", status: "EXPIRED", applicant: "吴市场负责人", purpose: "合作对接流程对齐" },
-    { id: 3, releaseNo: "ER20260710003", docNo: "MG-SOP-2026-0019", title: "检测报告编制与签发", version: "2.0", receiver: "客户C医药股份", contact: "QA-徐经理", expireDate: "2026-09-30", status: "APPROVED", applicant: "李市场", purpose: "报告样式确认（仅预览外链）" },
+    { id: 1, releaseNo: "ER20260721001", docNo: "MG-QM-2026-0001", title: "质量手册", version: "3.0", receiver: "客户A科技有限公司", contact: "采购部-林女士", expireDate: "2026-08-21", status: "IN_APPROVAL", applicant: "吴市场负责人", purpose: "供应商审核资料包", tokenActive: false, accessToken: "", accessLink: "" },
+    { id: 2, releaseNo: "ER20260601002", docNo: "MG-SOP-2026-0015", title: "客户投诉处理作业指导书", version: "1.0", receiver: "客户B检测中心", contact: "行政部-韩工", expireDate: "2026-07-01", status: "EXPIRED", applicant: "吴市场负责人", purpose: "合作对接流程对齐", tokenActive: false, accessToken: "EXT-OLDEXPIRED01", accessLink: "" },
+    { id: 3, releaseNo: "ER20260710003", docNo: "MG-SOP-2026-0019", title: "检测报告编制与签发", version: "2.0", receiver: "客户C医药股份", contact: "QA-徐经理", expireDate: "2026-09-30", status: "APPROVED", applicant: "吴市场负责人", purpose: "报告样式确认（仅预览外链）", tokenActive: true, accessToken: "EXT-DEMOC7K2", accessLink: "#/dcc/external-view?token=EXT-DEMOC7K2", watermarkPackName: "ER20260710003_专用水印包.pdf", approvedAt: "2026-07-10 11:20" },
   ],
 
   /** 外来文件独立流水（演示用 9xxxxx，与受控主档文件ID 分区） */
   externalDocs: [
-    { id: 1, fileId: 900001, extNo: "MG-EXT-STD-2026-0003", title: "GB/T 27025-2019 检测和校准实验室能力的通用要求", sourceType: "STANDARD", sourceOrg: "国家标准委", receiveDate: "2026-02-10", expireDate: "2029-12-31", status: "EFFECTIVE", owner: "李强", security: "INTERNAL", remark: "体系主标准，纸质存放行政部柜 A-1" },
-    { id: 2, fileId: 900002, extNo: "MG-EXT-CUS-2026-0011", title: "客户A 样品包装规范 V3", sourceType: "CUSTOMER", sourceOrg: "客户A科技有限公司", receiveDate: "2026-06-05", expireDate: "2026-12-31", status: "EFFECTIVE", owner: "陈华", security: "SECRET", remark: "影响样品接收指导书附录" },
-    { id: 3, fileId: 900003, extNo: "MG-EXT-STD-2023-0008", title: "旧版实验室安全通则（协会）", sourceType: "STANDARD", sourceOrg: "行业协会", receiveDate: "2023-04-01", expireDate: "2025-12-31", status: "EXPIRED", owner: "赵倩", security: "INTERNAL", remark: "已废止，仅归档查阅" },
-    { id: 4, fileId: 900004, extNo: "MG-EXT-STD-2026-0005", title: "JJF 1059.1-2012 测量不确定度评定与表示", sourceType: "STANDARD", sourceOrg: "国家计量院", receiveDate: "2026-07-06", expireDate: "2030-12-31", status: "EFFECTIVE", owner: "张敏", security: "INTERNAL", remark: "本月登记，供方法验证引用" },
-    { id: 5, fileId: 900005, extNo: "MG-EXT-CUS-2026-0014", title: "客户C 报告封面与签章要求（2026）", sourceType: "CUSTOMER", sourceOrg: "客户C医药股份", receiveDate: "2026-07-09", expireDate: "2026-12-31", status: "EFFECTIVE", owner: "陈华", security: "SECRET", remark: "驱动报告编制 SOP 升版 2.0" },
+    { id: 1, fileId: 900001, extNo: "MG-EXT-STD-2026-0003", title: "GB/T 27025-2019 检测和校准实验室能力的通用要求", sourceType: "STANDARD", sourceOrg: "国家标准委", receiveDate: "2026-02-10", expireDate: "2029-12-31", status: "EFFECTIVE", owner: "李强", security: "INTERNAL", remark: "体系主标准，纸质存放行政部柜 A-1", fileName: "GB-T-27025-2019.pdf", fileSize: 2048000 },
+    { id: 2, fileId: 900002, extNo: "MG-EXT-CUS-2026-0011", title: "客户A 样品包装规范 V3", sourceType: "CUSTOMER", sourceOrg: "客户A科技有限公司", receiveDate: "2026-06-05", expireDate: "2026-12-31", status: "EFFECTIVE", owner: "陈华", security: "SECRET", remark: "影响样品接收指导书附录", fileName: "客户A包装规范V3.pdf", fileSize: 512000 },
+    { id: 3, fileId: 900003, extNo: "MG-EXT-STD-2023-0008", title: "旧版实验室安全通则（协会）", sourceType: "STANDARD", sourceOrg: "行业协会", receiveDate: "2023-04-01", expireDate: "2025-12-31", status: "EXPIRED", owner: "赵倩", security: "INTERNAL", remark: "已废止，仅归档查阅", fileName: "协会安全通则旧版.pdf", fileSize: 320000 },
+    { id: 4, fileId: 900004, extNo: "MG-EXT-STD-2026-0005", title: "JJF 1059.1-2012 测量不确定度评定与表示", sourceType: "STANDARD", sourceOrg: "国家计量院", receiveDate: "2026-07-06", expireDate: "2030-12-31", status: "EFFECTIVE", owner: "张敏", security: "INTERNAL", remark: "本月登记，供方法验证引用", fileName: "JJF1059.1-2012.pdf", fileSize: 1800000 },
+    { id: 5, fileId: 900005, extNo: "MG-EXT-CUS-2026-0014", title: "客户C 报告封面与签章要求（2026）", sourceType: "CUSTOMER", sourceOrg: "客户C医药股份", receiveDate: "2026-07-09", expireDate: "2026-12-31", status: "EFFECTIVE", owner: "陈华", security: "SECRET", remark: "驱动报告编制 SOP 升版 2.0", fileName: "客户C报告封面要求2026.docx", fileSize: 256000 },
   ],
 
   reviews: [
