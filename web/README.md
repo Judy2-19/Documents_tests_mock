@@ -1,6 +1,8 @@
 # DCC 文控 · Vue 前端（可点测）
 
-**Vite + Vue 3.5 + TypeScript 5.3 + Element Plus + Vue Router**。业务逻辑在 `composables/dccApp.js`，页面在 `views/dcc/`（按侧栏分组），路由模块 `router/modules/dcc.js` 可直接给公司主路由 / 若依引用。需求基线 **V1.5.18**（§8.8～§8.11 / §19.8～§19.9）。原型已对齐：借阅跨部门预览、外发令牌/水印包、外来附件、纸质两步回收与筛选、附件实装；双字段 + 三级轻量修订 `rN`。
+**Vite + Vue 3.5 + TypeScript 5.3 + Element Plus + Vue Router**。业务逻辑在 `composables/dccApp.js`，页面在 `views/dcc/`（按侧栏分组），路由模块 `router/modules/dcc.js` 可直接给公司主路由 / 若依引用。
+
+需求基线 **V1.5.19**。原型已对齐：原格式预览与下载水印、三级 Word/Excel/PPT 轻量编辑、借阅跨部门预览、外发令牌/水印包、外来附件、纸质两步回收与筛选、附件实装、双字段 + 三级轻量修订 `rN`。
 
 ## 启动
 
@@ -44,12 +46,27 @@ web/
 │   │   ├── config/                  # 基础配置
 │   │   ├── index.js                 # 视图汇总
 │   │   ├── useDccPage.js            # inject('dcc')
-│   │   └── DccOverlays.vue          # 全局抽屉 / 弹窗
+│   │   └── DccOverlays.vue          # 全局抽屉 / 弹窗（含预览、三级编辑）
 │   ├── composables/dccApp.js        # 业务逻辑（Mock 演示动作）
+│   ├── utils/
+│   │   ├── office.js                # Word/Excel/PPT 预览与三级编辑写回
+│   │   ├── officeWatermark.js       # 下载原格式水印（含红章）
+│   │   └── excel.js                 # 合规 Excel 导入导出辅助
 │   ├── mock/data.js
 │   └── styles/layout.css
 └── package.json
 ```
+
+## 原型能力（V1.5.19）
+
+| 能力 | 说明 |
+|---|---|
+| 在线预览 | PDF 内嵌；图片直显；Word/Excel/PPT 前端解析；叠平铺水印 + 红色阶段水印 |
+| 下载水印 | `.pdf` / `.docx` / `.xlsx` / `.pptx` / 图片写入水印后再下载；Excel/Word 含红章 |
+| 三级编辑 | L3「编辑表单」：Word/Excel/PPT 改正文写回；PDF 叠字段；保存涨 `rN` |
+| 转 PDF | **非首期硬依赖**；正式环境是否叠加见仓库根目录对接清单 |
+
+相关依赖（见 `package.json`）：`pdf-lib`、`mammoth`、`xlsx`、`docx`、`pptxgenjs`、`jszip`。
 
 ## 挂公司主路由 / 若依
 

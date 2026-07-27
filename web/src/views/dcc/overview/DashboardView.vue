@@ -25,6 +25,44 @@ export default defineComponent({
           <div class="stat-card primary"><div class="label">当前数据域</div><div class="value" style="font-size:18px;">{{ statusTag(currentRole.domain).text }}</div><div class="hint">{{ data.user.role }} · 受控 {{ roleMyDocs.length }}</div></div>
         </div>
 
+        <div class="page-card" style="margin-bottom:16px;">
+          <div class="section-title">
+            <span>变更通知（待阅 {{ roleChangeInboxUnread }}）</span>
+            <el-button link type="primary" @click="navigate('notices')">全部通知</el-button>
+          </div>
+          <el-empty v-if="!roleChangeInbox.length" description="暂无变更通知；催办或换版/废弃后将出现在此" :image-size="48"></el-empty>
+          <el-table v-else :data="roleChangeInbox.slice(0, 8)" size="small" stripe class="dash-compact-table" style="width:100%">
+            <el-table-column label="类型" width="72" align="center">
+              <template #default="{ row }">
+                <span class="tag" :class="noticeTypeTag(row).cls">{{ noticeTypeTag(row).text }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="文件编号" width="150" show-overflow-tooltip>
+              <template #default="{ row }">{{ row.docNo || '-' }}</template>
+            </el-table-column>
+            <el-table-column label="变更说明" min-width="260" show-overflow-tooltip>
+              <template #default="{ row }">
+                <span :style="row.read ? '' : 'font-weight:600;'">{{ row.summary || row.title || '-' }}</span>
+                <el-tag v-if="row.urged && !row.read" size="small" type="danger" style="margin-left:6px;">催办</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="版本" width="100" align="center">
+              <template #default="{ row }">{{ (row.fromVer || row.version || '-') + (row.toVer && row.toVer !== '-' ? ('→' + row.toVer) : '') }}</template>
+            </el-table-column>
+            <el-table-column label="时间" width="140">
+              <template #default="{ row }">{{ row.updatedAt || row.createdAt || '-' }}</template>
+            </el-table-column>
+            <el-table-column label="操作" width="72" align="center" class-name="ops-col" label-class-name="ops-col">
+              <template #default="{ row }">
+                <div class="ops-cell">
+                  <button v-if="!row.read" class="link-btn" @click="markChangeInboxRead(row)">已阅</button>
+                  <span v-else style="color:#909399;font-size:12px;">已读</span>
+                </div>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+
         <div class="two-col dash-two-col">
           <div class="page-card dash-panel">
             <div class="section-title">
@@ -38,6 +76,11 @@ export default defineComponent({
               </el-table-column>
               <el-table-column label="名称" min-width="96" show-overflow-tooltip>
                 <template #default="{ row }">{{ row.title || '-' }}<span v-if="isSecret(row)" class="sec-mi" title="机密">密</span></template>
+              </el-table-column>
+              <el-table-column label="类型" width="72" align="center">
+                <template #default="{ row }">
+                  <span class="tag" :class="todoBizTag(row).cls">{{ todoBizTag(row).text }}</span>
+                </template>
               </el-table-column>
               <el-table-column label="环节" width="88" show-overflow-tooltip>
                 <template #default="{ row }">{{ row.node }}</template>

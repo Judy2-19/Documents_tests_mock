@@ -23,6 +23,11 @@ export default defineComponent({
             <el-table-column label="文件ID" width="68"><template #default="{ row }">{{ fileIdOf(row) }}</template></el-table-column>
             <el-table-column label="文件编号" width="160"><template #default="{ row }">{{ row.docNo }}</template></el-table-column>
             <el-table-column label="文件名称" min-width="180"><template #default="{ row }">{{ row.title || '-' }}<span v-if="isSecret(row)" class="sec-mi" title="机密">密</span></template></el-table-column>
+            <el-table-column label="申请类型" width="110" align="center">
+              <template #default="{ row }">
+                <span class="tag" :class="todoBizTag(row).cls">{{ todoBizTag(row).text }}</span>
+              </template>
+            </el-table-column>
             <el-table-column label="文件级别" width="150"><template #default="{ row }">{{ levelName(row.fileLevel) }}</template></el-table-column>
             <el-table-column label="业务领域" width="110"><template #default="{ row }">{{ ptName(row.productType) }}</template></el-table-column>
             <el-table-column label="提交人 / 部门" width="160"><template #default="{ row }">{{ row.applicant }}</template></el-table-column>

@@ -161,31 +161,302 @@ export default defineComponent({
   </div>
 </el-dialog>
 
-<!-- 三级表单在线编辑（T-02-A：轻量修订 rN，不改正式版号） -->
-<el-dialog v-model="formEditVisible" title="编辑三级表单（保存轻量修订 rN，免审批）" width="640px" destroy-on-close>
+<!-- 三级表单：Word/Excel/PPT 正文编辑；PDF 叠字段填写 -->
+<el-dialog
+  v-model="formEditVisible"
+  :title="formEditMode === 'word' ? '编辑表单 · Word 正文（轻量修订，免审批）'
+    : formEditMode === 'excel' ? '编辑表单 · Excel 表格（轻量修订，免审批）'
+    : formEditMode === 'ppt' ? '编辑表单 · PPT 文本（轻量修订，免审批）'
+    : formEditMode === 'pdf' ? '编辑表单 · 在 PDF 上填写（轻量修订，免审批）'
+    : '编辑表单 · 字段填写（轻量修订，免审批）'"
+  :width="formEditMode === 'excel' || formEditMode === 'word' ? '960px' : '920px'"
+  destroy-on-close
+  class="form-edit-dialog"
+>
   <p style="margin:0 0 10px;font-size:13px;color:#5c6b7a;" v-if="formEditDoc">
-    文件ID {{ fileIdOf(formEditDoc) }} · {{ formEditDoc.docNo }} · {{ formEditDoc.title }} · 正式版 {{ formEditDoc.version || '-' }} · 轻量修订 {{ formEditDoc.formRevision || 'r0' }} · {{ ptName(formEditDoc.productType) }}
-    <br/>保存后递增轻量修订号（如 r0→r1），<strong>不</strong>推进正式 1.0/2.0；正式升版请走修订审批。
+    文件ID {{ fileIdOf(formEditDoc) }} · {{ formEditDoc.docNo }} · {{ formEditDoc.title }} · 正式版 {{ formEditDoc.version || '-' }} · 轻量修订 {{ formEditDoc.formRevision || 'r0' }}
+    <br/>
+    <template v-if="formEditMode === 'word'">直接编辑 Word 正文，保存后写回 .docx。正式升版请走修订审批。</template>
+    <template v-else-if="formEditMode === 'excel'">直接编辑单元格，保存后写回 .xlsx。正式升版请走修订审批。</template>
+    <template v-else-if="formEditMode === 'ppt'">按幻灯片编辑文本，保存后写回 .pptx。正式升版请走修订审批。</template>
+    <template v-else-if="formEditMode === 'pdf'">在蓝色虚线框内填写，保存后写入 PDF 末页。正式升版请走修订审批。</template>
+    <template v-else>无 Office/PDF 附件时仅保存字段；建议上传 Word / Excel / PPT / PDF 后编辑。</template>
   </p>
-  <el-input v-model="formEditText" type="textarea" :rows="14" placeholder="在此编辑表单内容…"></el-input>
-  <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
-    <el-button @click="formEditVisible=false">取消</el-button>
-    <el-button type="primary" @click="saveFormEdit">保存</el-button>
-  </div>
-</el-dialog>
 
-<!-- Preview dialog：预览水印可由文控在「水印策略」中开关；下载/打印仍强制水印 -->
-<el-dialog v-model="previewVisible" :title="data.watermark.preview ? '转 PDF 预览（含水印）' : '转 PDF 预览（预览未加水印）'" width="720px" destroy-on-close>
-  <div class="preview-box">
+  <!-- Word -->
+  <div v-if="formEditDoc && formEditMode === 'word'" class="form-edit-office">
+    <div class="form-edit-office-stage">
+      <div class="wm"></div>
+      <div class="wm-text">
+        <span v-for="n in 14" :key="'fw-' + n">{{ data.user.name }} · {{ data.user.userNo }} · {{ formEditDoc.docNo }}</span>
+      </div>
+      <div
+        class="office-word-editor"
+        contenteditable="true"
+        :key="'we-' + fileIdOf(formEditDoc) + '-' + (formEditDoc.formRevision || 'r0')"
+        v-html="formEditWordHtml"
+        @input="syncFormEditWordHtml"
+      ></div>
+    </div>
+    <div class="form-edit-meta-row">
+      <el-input v-model="formEditFields.filler" size="small" placeholder="填写人" style="width:160px" />
+      <el-date-picker v-model="formEditFields.fillDate" type="date" value-format="YYYY-MM-DD" size="small" placeholder="填写日期" style="width:160px" />
+      <el-input v-model="formEditFields.remark" size="small" placeholder="备注（可选）" style="flex:1" />
+    </div>
+  </div>
+
+  <!-- Excel -->
+  <div v-else-if="formEditDoc && formEditMode === 'excel'" class="form-edit-office">
+    <div class="office-sheet-tabs">
+      <button
+        v-for="(s, i) in formEditSheets"
+        :key="'es-' + i"
+        type="button"
+        class="office-sheet-tab"
+        :class="{ active: formEditSheetIndex === i }"
+        @click="formEditSheetIndex = i"
+      >{{ s.name || ('Sheet' + (i + 1)) }}</button>
+      <el-button size="small" @click="addExcelRow">加行</el-button>
+      <el-button size="small" @click="addExcelCol">加列</el-button>
+    </div>
+    <div class="form-edit-office-stage">
+      <div class="wm"></div>
+      <div class="wm-text">
+        <span v-for="n in 14" :key="'fe-' + n">{{ data.user.name }} · {{ data.user.userNo }} · {{ formEditDoc.docNo }}</span>
+      </div>
+      <div class="office-excel-scroll" v-if="formEditSheets[formEditSheetIndex]">
+        <table class="office-excel-grid">
+          <tbody>
+            <tr v-for="(row, ri) in formEditSheets[formEditSheetIndex].aoa" :key="'er-' + ri">
+              <td v-for="(cell, ci) in row" :key="'ec-' + ri + '-' + ci">
+                <input v-model="formEditSheets[formEditSheetIndex].aoa[ri][ci]" />
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="form-edit-meta-row">
+      <el-input v-model="formEditFields.filler" size="small" placeholder="填写人" style="width:160px" />
+      <el-date-picker v-model="formEditFields.fillDate" type="date" value-format="YYYY-MM-DD" size="small" placeholder="填写日期" style="width:160px" />
+      <el-input v-model="formEditFields.remark" size="small" placeholder="备注（可选）" style="flex:1" />
+    </div>
+  </div>
+
+  <!-- PPT -->
+  <div v-else-if="formEditDoc && formEditMode === 'ppt'" class="form-edit-office">
+    <div class="office-sheet-tabs">
+      <button
+        v-for="(s, i) in formEditSlides"
+        :key="'ps-' + i"
+        type="button"
+        class="office-sheet-tab"
+        :class="{ active: formEditSlideIndex === i }"
+        @click="formEditSlideIndex = i"
+      >幻灯片 {{ s.index || (i + 1) }}</button>
+    </div>
+    <div class="form-edit-office-stage" v-if="formEditSlides[formEditSlideIndex]">
+      <div class="wm"></div>
+      <div class="wm-text">
+        <span v-for="n in 14" :key="'fp-' + n">{{ data.user.name }} · {{ data.user.userNo }} · {{ formEditDoc.docNo }}</span>
+      </div>
+      <div class="office-ppt-edit">
+        <div class="office-ppt-imgs" v-if="formEditSlides[formEditSlideIndex].images && formEditSlides[formEditSlideIndex].images.length">
+          <img
+            v-for="(src, ii) in formEditSlides[formEditSlideIndex].images"
+            :key="'pimg-' + ii"
+            :src="src"
+            alt="幻灯片图片（只读保留）"
+          />
+        </div>
+        <label class="field-label">本页文本（每行一段；图片自动保留不丢失）</label>
+        <el-input
+          v-model="formEditSlides[formEditSlideIndex].textJoined"
+          type="textarea"
+          :rows="8"
+          placeholder="编辑本页文字…"
+        />
+      </div>
+    </div>
+    <div class="form-edit-meta-row">
+      <el-input v-model="formEditFields.filler" size="small" placeholder="填写人" style="width:160px" />
+      <el-date-picker v-model="formEditFields.fillDate" type="date" value-format="YYYY-MM-DD" size="small" placeholder="填写日期" style="width:160px" />
+      <el-input v-model="formEditFields.remark" size="small" placeholder="备注（可选）" style="flex:1" />
+    </div>
+  </div>
+
+  <!-- PDF / 无附件字段 -->
+  <div class="form-edit-stage preview-box" v-else-if="formEditDoc">
     <template v-if="data.watermark.preview">
       <div class="wm"></div>
       <div class="wm-text">
-        <span v-for="n in 12" :key="n">{{ data.user.name }} · {{ data.user.userNo }} · {{ currentDoc && currentDoc.docNo }} · 2026-07-22</span>
+        <span v-for="n in 10" :key="n">{{ data.user.name }} · {{ data.user.userNo }} · {{ formEditDoc.docNo }}</span>
       </div>
-      <div class="wm-status-corner" v-if="previewStatusWm.corner">{{ previewStatusWm.corner }}</div>
-      <div class="wm-status-secret" v-if="previewStatusWm.secret"><span>机密文件</span></div>
     </template>
-    <div class="preview-doc">
+
+    <iframe
+      v-if="formEditMode === 'pdf'"
+      class="form-edit-pdf"
+      :src="formEditDoc.fileUrl"
+      title="表单 PDF"
+    ></iframe>
+    <img
+      v-else-if="previewFileKind(formEditDoc) === 'image'"
+      class="form-edit-img"
+      :src="formEditDoc.fileUrl"
+      :alt="formEditDoc.fileName || '表单'"
+    />
+    <div v-else class="form-edit-paper">
+      <h3>{{ formEditDoc.title || '三级表单' }}</h3>
+      <div class="meta">{{ formEditDoc.docNo }} · 正式版 {{ formEditDoc.version || '-' }}</div>
+      <p style="color:#909399;font-size:13px;">建议上传 Word / Excel / PPT 后直接编辑正文；当前仅保存字段。</p>
+    </div>
+
+    <div class="form-edit-overlay">
+      <div class="form-edit-fields">
+        <div>
+          <label class="field-label">填写人</label>
+          <el-input v-model="formEditFields.filler" size="small" placeholder="填写人" />
+        </div>
+        <div>
+          <label class="field-label">填写日期</label>
+          <el-date-picker
+            v-model="formEditFields.fillDate"
+            type="date"
+            value-format="YYYY-MM-DD"
+            size="small"
+            style="width:100%"
+            placeholder="选择日期"
+          />
+        </div>
+        <div class="field-full">
+          <label class="field-label">记录内容</label>
+          <el-input v-model="formEditFields.content" type="textarea" :rows="2" placeholder="填写内容…" />
+        </div>
+        <div class="field-full">
+          <label class="field-label">备注</label>
+          <el-input v-model="formEditFields.remark" size="small" placeholder="可选" />
+        </div>
+      </div>
+    </div>
+  </div>
+  <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
+    <el-button @click="formEditVisible=false">取消</el-button>
+    <el-button type="primary" :loading="formEditSaving" @click="saveFormEdit">
+      {{ formEditMode === 'word' ? '保存 Word'
+        : formEditMode === 'excel' ? '保存 Excel'
+        : formEditMode === 'ppt' ? '保存 PPT'
+        : formEditMode === 'pdf' ? '保存到 PDF'
+        : '保存' }}
+    </el-button>
+  </div>
+</el-dialog>
+
+<!-- Preview dialog：PDF/图片/Word/Excel/PPT 具体预览；无附件时演示正文 -->
+<el-dialog
+  v-model="previewVisible"
+  :title="currentDoc && currentDoc.fileUrl
+    ? ('附件预览 · ' + (currentDoc.fileName || currentDoc.title || '受控文件'))
+    : (data.watermark.preview ? '转 PDF 预览（含水印 · 演示正文）' : '转 PDF 预览（演示正文）')"
+  :width="['pdf','image','word','excel','ppt'].indexOf(previewFileKind(currentDoc)) >= 0 ? '920px' : '720px'"
+  destroy-on-close
+>
+  <div
+    class="preview-box"
+    :class="{
+      'preview-box--file': previewFileKind(currentDoc) === 'pdf' || previewFileKind(currentDoc) === 'image',
+      'preview-box--office': ['word','excel','ppt'].indexOf(previewFileKind(currentDoc)) >= 0
+    }"
+  >
+    <iframe
+      v-if="previewFileKind(currentDoc) === 'pdf'"
+      class="preview-file-frame"
+      :src="currentDoc.fileUrl"
+      title="PDF 预览"
+    ></iframe>
+
+    <div v-else-if="previewFileKind(currentDoc) === 'image'" class="preview-file-image-wrap">
+      <img class="preview-file-image" :src="currentDoc.fileUrl" :alt="currentDoc.fileName || '附件预览'" />
+    </div>
+
+    <!-- Word / Excel / PPT 前端解析预览 -->
+    <div v-else-if="['word','excel','ppt'].indexOf(previewFileKind(currentDoc)) >= 0" class="office-preview-pane">
+      <div v-if="officePreview.loading" class="office-preview-status">正在解析预览…</div>
+      <div v-else-if="officePreview.error" class="office-preview-status err">
+        {{ officePreview.error }}
+        <el-button type="primary" size="small" style="margin-left:10px" @click="openUploadedFile(currentDoc)">打开附件</el-button>
+      </div>
+      <template v-else>
+        <div v-if="previewFileKind(currentDoc) === 'word'" class="office-paper office-paper--wm">
+          <div class="office-paper-wm-tiles" aria-hidden="true">
+            <span v-for="n in 12" :key="'owm-' + n">{{ data.user.name }} · {{ data.user.userNo }} · {{ currentDoc && currentDoc.docNo }}</span>
+          </div>
+          <div class="office-paper-body" v-html="officePreview.html || '<p>（空文档）</p>'"></div>
+        </div>
+        <template v-else-if="previewFileKind(currentDoc) === 'excel'">
+          <div class="office-sheet-tabs">
+            <button
+              v-for="(s, i) in officePreview.sheets"
+              :key="'pv-es-' + i"
+              type="button"
+              class="office-sheet-tab"
+              :class="{ active: officePreview.sheetIndex === i }"
+              @click="officePreview.sheetIndex = i"
+            >{{ s.name || ('Sheet' + (i + 1)) }}</button>
+          </div>
+          <div
+            class="office-paper office-excel-html office-paper--wm"
+            v-if="officePreview.sheets[officePreview.sheetIndex]"
+          >
+            <div class="office-paper-wm-tiles" aria-hidden="true">
+              <span v-for="n in 12" :key="'ewm-' + n">{{ data.user.name }} · {{ data.user.userNo }} · {{ currentDoc && currentDoc.docNo }}</span>
+            </div>
+            <div class="office-paper-body" v-html="officePreview.sheets[officePreview.sheetIndex].html || ''"></div>
+          </div>
+        </template>
+        <template v-else>
+          <div v-if="!officePreview.slides || !officePreview.slides.length" class="office-preview-status">
+            PPT 在线预览暂不可用，请直接下载后用 PowerPoint / WPS 打开。
+          </div>
+          <template v-else>
+            <div class="office-sheet-tabs">
+              <button
+                v-for="(s, i) in officePreview.slides"
+                :key="'pv-ps-' + i"
+                type="button"
+                class="office-sheet-tab"
+                :class="{ active: officePreview.slideIndex === i }"
+                @click="officePreview.slideIndex = i"
+              >幻灯片 {{ s.index || (i + 1) }}</button>
+            </div>
+            <div
+              class="office-paper office-ppt-slide office-paper--wm"
+              v-if="officePreview.slides[officePreview.slideIndex]"
+            >
+              <div class="office-paper-wm-tiles" aria-hidden="true">
+                <span v-for="n in 12" :key="'pwm2-' + n">{{ data.user.name }} · {{ data.user.userNo }} · {{ currentDoc && currentDoc.docNo }}</span>
+              </div>
+              <div
+                class="office-paper-body"
+                v-html="officePreview.slides[officePreview.slideIndex].html || '<p>（空）</p>'"
+              ></div>
+            </div>
+          </template>
+        </template>
+      </template>
+    </div>
+
+    <div v-else-if="previewFileKind(currentDoc) === 'other'" class="preview-doc">
+      <h3>{{ currentDoc && currentDoc.title || '受控文件' }}</h3>
+      <div class="meta">编号 {{ currentDoc && currentDoc.docNo }}　版本 {{ currentDoc && currentDoc.version }}</div>
+      <p>已上传附件：<strong>{{ currentDoc.fileName || '-' }}</strong>
+        <template v-if="currentDoc.fileSize">（{{ formatFileSize(currentDoc.fileSize) }}）</template>
+      </p>
+      <p style="color:#606266;font-size:13px;">该格式暂不支持内嵌预览，请打开或下载查看。</p>
+      <el-button type="primary" @click="openUploadedFile(currentDoc)">打开真实附件</el-button>
+    </div>
+
+    <div v-else class="preview-doc">
       <h3>{{ currentDoc && currentDoc.title || '受控文件' }}</h3>
       <div class="meta">编号 {{ currentDoc && currentDoc.docNo }}　版本 {{ currentDoc && currentDoc.version }}
         <template v-if="data.watermark.preview">　· 预览水印已开 · 下载/打印仍强制水印</template>
@@ -195,13 +466,26 @@ export default defineComponent({
       <p>1 目的<br/>规范相关作业流程，确保现行有效版本受控使用。</p>
       <p>2 范围<br/>适用于本公司相关部门及岗位。</p>
       <p>3 职责<br/>文件责任人维护内容；文控中心负责编号、分发与回收。</p>
-      <p style="color:#8c8c8c;font-size:12px;margin-top:20px;">预览为只读；打印/下载请走受控打印或二次申请。文控可在基础配置 → 水印策略中开关「预览加水印」。</p>
+      <p style="color:#8c8c8c;font-size:12px;margin-top:20px;">当前文件无上传附件，显示演示正文。上传 PDF / Word / Excel / PPT / 图片后可预览真实内容。</p>
     </div>
+
+    <!-- 水印置顶叠层：Office/PDF/图片预览均强制可见（Office 滚动时仍覆盖可视区） -->
+    <template v-if="data.watermark.preview || ['word','excel','ppt'].indexOf(previewFileKind(currentDoc)) >= 0">
+      <div class="wm preview-wm-top"></div>
+      <div class="wm-text preview-wm-top">
+        <span v-for="n in 16" :key="'pwm-' + n">{{ data.user.name }} · {{ data.user.userNo }} · {{ currentDoc && currentDoc.docNo }}</span>
+      </div>
+      <div class="wm-status-corner preview-wm-top" v-if="previewStatusWm.corner">{{ previewStatusWm.corner }}</div>
+      <div class="wm-status-secret preview-wm-top" v-if="previewStatusWm.secret"><span>机密文件</span></div>
+    </template>
   </div>
   <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px;">
     <el-button @click="previewVisible=false">关闭</el-button>
+    <el-button v-if="currentDoc && (currentDoc.fileUrl || currentDoc.fileBlob)" @click="openUploadedFile(currentDoc)">打开附件（含水印）</el-button>
     <el-button @click="controlledPrint(currentDoc)">受控打印</el-button>
-    <el-button type="primary" @click="mockDownload(currentDoc)">下载水印 PDF</el-button>
+    <el-button type="primary" @click="mockDownload(currentDoc)">
+      {{ currentDoc && (currentDoc.fileUrl || currentDoc.fileBlob) ? '下载真实附件' : '下载演示件' }}
+    </el-button>
   </div>
 </el-dialog>
 

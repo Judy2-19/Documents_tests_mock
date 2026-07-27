@@ -69,7 +69,7 @@ const DCC_DATA = {
   stats: {},
 
   documents: [
-    { id: 1, docNo: "MG-SOP-2026-0008", title: "实验室样品接收作业指导书", category: "SOP", version: "2.0", status: "EFFECTIVE", security: "INTERNAL", dept: "行政部", owner: "张敏", effectiveDate: "2026-07-01", reviewDue: "2027-07-01", allowDownload: true, pages: 12, changeSummary: "增加冷链样品开箱拍照要求；附录更新接收标签样例" },
+    { id: 1, fileId: 1, docNo: "MG-SOP-2026-0008", title: "实验室样品接收作业指导书", category: "SOP", version: "2.0", status: "EFFECTIVE", security: "INTERNAL", dept: "行政部", owner: "张敏", effectiveDate: "2026-07-01", reviewDue: "2027-07-01", allowDownload: true, pages: 12, changeSummary: "增加冷链样品开箱拍照要求；附录更新接收标签样例" },
     { id: 2, docNo: "MG-QM-2026-0001", title: "质量手册", category: "QM", version: "3.0", status: "EFFECTIVE", security: "INTERNAL", dept: "行政部", owner: "李强", effectiveDate: "2026-03-15", reviewDue: "2027-03-15", allowDownload: true, pages: 48, changeSummary: "对齐 CNAS 2025 评审意见，调整组织架构图" },
     { id: 3, docNo: "MG-WI-2026-0012", title: "LC-MS 开机点检规程", category: "WI", version: "1.0", status: "EFFECTIVE", security: "INTERNAL", dept: "技术部", owner: "王磊", effectiveDate: "2026-05-20", reviewDue: "2026-08-20", allowDownload: true, pages: 6, changeSummary: "首发：覆盖 Waters Xevo TQ-S 日常开机" },
     { id: 4, docNo: "MG-FORM-2026-0003", title: "设备校准记录表（空白）", category: "FORM", version: "1.0", status: "EFFECTIVE", security: "PUBLIC", dept: "行政部", owner: "张敏", effectiveDate: "2026-01-10", reviewDue: "2027-01-10", allowDownload: true, pages: 2, changeSummary: "首发空白表，供计量室填写" },
@@ -88,7 +88,7 @@ const DCC_DATA = {
     { id: 17, docNo: "MG-WI-2026-0020", title: "纯水机制水与换芯规程", category: "WI", version: "1.0", status: "EFFECTIVE", security: "INTERNAL", dept: "技术部", owner: "刘洋", effectiveDate: "2026-07-12", reviewDue: "2027-01-12", allowDownload: true, pages: 4, changeSummary: "本月新建：电阻率 ≤0.055 μS/cm 判定" },
     { id: 18, docNo: "MG-SOP-2024-0019", title: "实验室废弃物分类处置", category: "SOP", version: "1.0", status: "EFFECTIVE", security: "INTERNAL", dept: "技术部", owner: "赵倩", effectiveDate: "2024-12-20", reviewDue: "2026-06-30", allowDownload: true, pages: 14, changeSummary: "复审超期：医废与危废分流标签更新中" },
     { id: 19, docNo: "MG-QM-2025-0003", title: "内部审核控制程序", category: "QM", version: "1.0", status: "EFFECTIVE", security: "INTERNAL", dept: "行政部", owner: "李强", effectiveDate: "2025-08-08", reviewDue: "2026-08-08", allowDownload: true, pages: 12, changeSummary: "首发程序文件" },
-    { id: 20, docNo: "MG-SOP-2026-0019", title: "检测报告编制与签发", category: "SOP", version: "2.0", status: "EFFECTIVE", security: "INTERNAL", dept: "市场部", owner: "陈华", effectiveDate: "2026-07-18", reviewDue: "2027-07-18", allowDownload: true, pages: 15, changeSummary: "本月修订升版：增加电子签章与防伪码" },
+    { id: 20, fileId: 20, docNo: "MG-SOP-2026-0019", title: "检测报告编制与签发", category: "SOP", version: "2.0", status: "EFFECTIVE", security: "INTERNAL", dept: "市场部", owner: "陈华", effectiveDate: "2026-07-18", reviewDue: "2027-07-18", allowDownload: true, pages: 15, changeSummary: "本月修订升版：增加电子签章与防伪码" },
     { id: 21, docNo: "MG-FORM-2026-0014", title: "仪器使用登记表", category: "FORM", version: "1.0", status: "EFFECTIVE", security: "PUBLIC", dept: "技术部", owner: "王磊", effectiveDate: "2026-07-03", reviewDue: "2027-07-03", allowDownload: true, pages: 1, changeSummary: "本月新建：各仪器室共用模板" },
     { id: 22, docNo: "MG-WI-2026-0007", title: "样品前处理通风柜操作", category: "WI", version: "1.0", status: "EFFECTIVE", security: "INTERNAL", dept: "技术部", owner: "孙悦", effectiveDate: "2026-04-22", reviewDue: "2026-10-22", allowDownload: true, pages: 5, changeSummary: "首发" },
     { id: 23, docNo: "MG-SOP-2024-0030", title: "实验室人员健康监护管理规定", category: "SOP", version: "2.0", status: "EFFECTIVE", security: "INTERNAL", dept: "行政部", owner: "张敏", effectiveDate: "2024-01-01", reviewDue: "2025-01-01", allowDownload: true, pages: 2, changeSummary: "升版：完善操作步骤与判定标准" },
@@ -387,17 +387,73 @@ const DCC_DATA = {
   ],
 
   changes: [
-    { id: 1, changeNo: "ECN20260701001", docNo: "MG-SOP-2026-0008", title: "实验室样品接收作业指导书", fromVer: "1.0", toVer: "2.0", effectiveDate: "2026-07-01", status: "CLOSED", recycleProgress: "5/5", noticeNo: "CN20260701001" },
-    { id: 2, changeNo: "ECN20260721002", docNo: "MG-SOP-2025-0021", title: "危化品贮存管理规定", fromVer: "1.0", toVer: "2.0", effectiveDate: "2026-07-25", status: "RECYCLING", recycleProgress: "2/7", noticeNo: "CN20260721002" },
-    { id: 3, changeNo: "ECN20260718003", docNo: "MG-SOP-2026-0019", title: "检测报告编制与签发", fromVer: "1.0", toVer: "2.0", effectiveDate: "2026-07-18", status: "NOTIFYING", recycleProgress: "1/3", noticeNo: "CN20260718003" },
-    { id: 4, changeNo: "ECN20260715004", docNo: "MG-SOP-2026-0016", title: "生物样本冷链运输指导书", fromVer: "-", toVer: "1.0", effectiveDate: "2026-07-15", status: "CLOSED", recycleProgress: "-", noticeNo: "CN20260715004" },
+    { id: 1, changeNo: "ECN20260701001", docNo: "MG-SOP-2026-0008", title: "实验室样品接收作业指导书", version: "1.0", fromVer: "1.0", toVer: "2.0", changeType: "REVISE", effectiveDate: "2026-07-01", status: "CLOSED", recycleProgress: "5/5", noticeNo: "CN20260701001", changeSummary: "旧版 1.0 回收：增加冷链样品开箱拍照要求；附录更新接收标签样例" },
+    { id: 2, changeNo: "ECN20260721002", docNo: "MG-SOP-2025-0021", fileId: 5, title: "危化品贮存管理规定", version: "1.0", fromVer: "1.0", toVer: "2.0", changeType: "REVISE", effectiveDate: "2026-07-25", status: "RECYCLING", recycleProgress: "2/7", noticeNo: "CN20260721002", changeSummary: "旧版 1.0 待回收：市监局检查反馈补充易制毒双人双锁要求" },
+    { id: 3, changeNo: "ECN20260718003", docNo: "MG-SOP-2026-0019", title: "检测报告编制与签发", version: "1.0", fromVer: "1.0", toVer: "2.0", changeType: "REVISE", effectiveDate: "2026-07-18", status: "NOTIFYING", recycleProgress: "1/3", noticeNo: "CN20260718003", changeSummary: "旧版 1.0 回收中：本月修订升版增加电子签章与防伪码" },
+    { id: 4, changeNo: "ECN20260718004", docNo: "MG-TECH-2024-0007", fileId: 6, title: "光谱分析内部技术规范", version: "2.0", fromVer: "2.0", toVer: "-", changeType: "OBSOLETE", effectiveDate: "2026-07-18", status: "CLOSED", recycleProgress: "3/3", noticeNo: "CN20260718004", changeSummary: "已废弃：方法迁入新版 MG-TECH-2026-0002" },
+    { id: 5, changeNo: "ECN20260710005", docNo: "MG-FORM-2025-0009", fileId: 16, title: "培训签到表（旧版）", version: "1.0", fromVer: "1.0", toVer: "-", changeType: "EXPIRED", effectiveDate: "2026-07-10", status: "CLOSED", recycleProgress: "-", noticeNo: "CN20260710005", changeSummary: "复审到期未续期，按过期失效处理" },
   ],
 
   notices: [
-    { id: 1, noticeNo: "CN20260701001", docNo: "MG-SOP-2026-0008", title: "【换版】MG-SOP-2026-0008 样品接收指导书 1.0→2.0，请停用旧版", sentAt: "2026-07-01 09:00", unread: 0, total: 36, status: "CLOSED" },
-    { id: 2, noticeNo: "CN20260721001", docNo: "MG-WI-2026-0004", title: "【分发】MG-WI-2026-0004 气相色谱维护指导，请于 7/22 前签收", sentAt: "2026-07-19 15:20", unread: 12, total: 18, status: "SENT" },
-    { id: 3, noticeNo: "CN20260718003", docNo: "MG-SOP-2026-0019", title: "【换版】检测报告编制与签发已升版 2.0，旧纸质份回收中", sentAt: "2026-07-18 16:00", unread: 5, total: 22, status: "SENT" },
-    { id: 4, noticeNo: "CN20260715004", docNo: "MG-SOP-2026-0016", title: "【新发】生物样本冷链运输指导书 1.0 已生效并分发行政部/样品组", sentAt: "2026-07-15 10:30", unread: 0, total: 14, status: "CLOSED" },
+    {
+      id: 1, noticeNo: "CN20260701001", docNo: "MG-SOP-2026-0008", title: "【换版】实验室样品接收作业指导书 1.0→2.0，请停用旧版",
+      noticeType: "REVISE", version: "1.0", fromVer: "1.0", toVer: "2.0", sentAt: "2026-07-01 09:00", status: "CLOSED", urgeCount: 0,
+      receivers: [
+        { name: "周文控", roleCode: "DCC_CONTROLLER", read: true },
+        { name: "李市场", roleCode: "DCC_DEPT_MKT", read: true },
+        { name: "吴市场负责人", roleCode: "DCC_LEADER_MKT", read: true },
+      ],
+      unread: 0, total: 3,
+    },
+    {
+      id: 2, noticeNo: "CN20260718003", docNo: "MG-SOP-2026-0019", title: "【换版】检测报告编制与签发 1.0→2.0，请停用旧版",
+      noticeType: "REVISE", version: "1.0", fromVer: "1.0", toVer: "2.0", sentAt: "2026-07-18 16:00", status: "SENT", urgeCount: 0,
+      receivers: [
+        { name: "周文控", roleCode: "DCC_CONTROLLER", read: true },
+        { name: "李市场", roleCode: "DCC_DEPT_MKT", read: false },
+        { name: "吴市场负责人", roleCode: "DCC_LEADER_MKT", read: false },
+      ],
+      unread: 2, total: 3,
+    },
+    {
+      id: 3, noticeNo: "CN20260718004", docNo: "MG-TECH-2024-0007", fileId: 6, title: "【废弃】光谱分析内部技术规范 2.0 已废止，请停用",
+      noticeType: "OBSOLETE", version: "2.0", fromVer: "2.0", toVer: "-", sentAt: "2026-07-18 11:20", status: "SENT", urgeCount: 0,
+      receivers: [
+        { name: "王技术", roleCode: "DCC_DEPT_TECH", read: false },
+        { name: "周技术负责人", roleCode: "DCC_LEADER_TECH", read: true },
+        { name: "周文控", roleCode: "DCC_CONTROLLER", read: false },
+      ],
+      unread: 2, total: 3,
+    },
+    {
+      id: 4, noticeNo: "CN20260710005", docNo: "MG-FORM-2025-0009", fileId: 16, title: "【过期】培训签到表（旧版）复审到期未续期，已按过期失效",
+      noticeType: "EXPIRED", version: "1.0", fromVer: "1.0", toVer: "-", sentAt: "2026-07-10 09:00", status: "SENT", urgeCount: 0,
+      receivers: [
+        { name: "孙财务", roleCode: "DCC_DEPT_FIN", read: false },
+        { name: "冯财务负责人", roleCode: "DCC_LEADER_FIN", read: true },
+      ],
+      unread: 1, total: 2,
+    },
+  ],
+
+  /** 工作台变更通知收件箱（按人员；催办/发送时写入） */
+  changeInbox: [
+    {
+      id: 9001, noticeNo: "CN20260718003", docNo: "MG-SOP-2026-0019",
+      title: "【换版】检测报告编制与签发 1.0→2.0，请停用旧版",
+      summary: "MG-SOP-2026-0019《检测报告编制与签发》换版：旧版 1.0 → 新版 2.0，请停用旧版并配合纸质回收",
+      noticeType: "REVISE", fromVer: "1.0", toVer: "2.0", version: "1.0",
+      forName: "李市场", forRole: "DCC_DEPT_MKT", read: false, urged: false, urgeCount: 0,
+      createdAt: "2026-07-18 16:00", updatedAt: "2026-07-18 16:00",
+    },
+    {
+      id: 9002, noticeNo: "CN20260718003", docNo: "MG-SOP-2026-0019",
+      title: "【换版】检测报告编制与签发 1.0→2.0，请停用旧版",
+      summary: "MG-SOP-2026-0019《检测报告编制与签发》换版：旧版 1.0 → 新版 2.0，请停用旧版并配合纸质回收",
+      noticeType: "REVISE", fromVer: "1.0", toVer: "2.0", version: "1.0",
+      forName: "吴市场负责人", forRole: "DCC_LEADER_MKT", read: false, urged: false, urgeCount: 0,
+      createdAt: "2026-07-18 16:00", updatedAt: "2026-07-18 16:00",
+    },
   ],
 
   distributions: [
@@ -421,16 +477,16 @@ const DCC_DATA = {
   },
 
   hardCopies: [
-    { id: 1, copyNo: "HC-SOP-2026-0008-01", docNo: "MG-SOP-2026-0008", version: "2.0", holder: "市场部", location: "接收窗口墙柜", status: "IN_USE", printedAt: "2026-07-01", printedBy: "周文控" },
-    { id: 2, copyNo: "HC-SOP-2026-0008-02", docNo: "MG-SOP-2026-0008", version: "2.0", holder: "行政部", location: "文件柜B-3", status: "IN_USE", printedAt: "2026-07-01", printedBy: "周文控" },
-    { id: 3, copyNo: "HC-SOP-2025-0021-01", docNo: "MG-SOP-2025-0021", version: "1.0", holder: "危化品库", location: "库房门口看板", status: "RECYCLE_PENDING", printedAt: "2025-11-02", printedBy: "赵倩", recycleReason: "换版 2.0 待生效，旧份须回收" },
-    { id: 4, copyNo: "HC-SOP-2025-0021-02", docNo: "MG-SOP-2025-0021", version: "1.0", holder: "技术部", location: "技术部文件架第2格", status: "RECYCLE_PENDING", printedAt: "2025-11-02", printedBy: "赵倩", recycleReason: "换版回收" },
-    { id: 5, copyNo: "HC-SOP-2025-0021-03", docNo: "MG-SOP-2025-0021", version: "1.0", holder: "样品前处理室", location: "通风柜旁夹子", status: "RECYCLE_PENDING", printedAt: "2025-11-05", printedBy: "周文控", recycleReason: "换版回收" },
-    { id: 6, copyNo: "HC-WI-2026-0012-01", docNo: "MG-WI-2026-0012", version: "1.0", holder: "仪器室1", location: "LC-MS 机旁夹", status: "IN_USE", printedAt: "2026-05-20", printedBy: "王磊" },
-    { id: 7, copyNo: "HC-SOP-2026-0019-01", docNo: "MG-SOP-2026-0019", version: "1.0", holder: "市场部", location: "签发岗桌面", status: "RECYCLE_PENDING", printedAt: "2025-02-14", printedBy: "陈华", recycleReason: "已升版 2.0" },
-    { id: 8, copyNo: "HC-SOP-2026-0019-02", docNo: "MG-SOP-2026-0019", version: "1.0", holder: "授权签字人办公室", location: "抽屉A", status: "RECYCLE_PENDING", printedAt: "2025-03-01", printedBy: "周文控", recycleReason: "已升版 2.0" },
-    { id: 9, copyNo: "HC-WI-2026-0004-01", docNo: "MG-WI-2026-0004", version: "1.0", holder: "色谱室", location: "7890B 旁", status: "IN_USE", printedAt: "2026-04-10", printedBy: "刘洋" },
-    { id: 10, copyNo: "HC-SOP-2026-0016-01", docNo: "MG-SOP-2026-0016", version: "1.0", holder: "市场部", location: "冷库门口", status: "IN_USE", printedAt: "2026-07-15", printedBy: "周文控" },
+    { id: 1, copyNo: "HC-SOP-2026-0008-01", docNo: "MG-SOP-2026-0008", fileId: 1, title: "实验室样品接收作业指导书", version: "2.0", holder: "市场部", location: "接收窗口墙柜", status: "IN_USE", printedAt: "2026-07-01", printedBy: "周文控" },
+    { id: 2, copyNo: "HC-SOP-2026-0008-02", docNo: "MG-SOP-2026-0008", fileId: 1, title: "实验室样品接收作业指导书", version: "2.0", holder: "行政部", location: "文件柜B-3", status: "IN_USE", printedAt: "2026-07-01", printedBy: "周文控" },
+    { id: 3, copyNo: "HC-SOP-2025-0021-01", docNo: "MG-SOP-2025-0021", fileId: 5, title: "危化品贮存管理规定", version: "1.0", holder: "危化品库", location: "库房门口看板", status: "RECYCLE_PENDING", printedAt: "2025-11-02", printedBy: "赵倩", recycleReason: "换版 2.0 待生效，旧份须回收" },
+    { id: 4, copyNo: "HC-SOP-2025-0021-02", docNo: "MG-SOP-2025-0021", fileId: 5, title: "危化品贮存管理规定", version: "1.0", holder: "技术部", location: "技术部文件架第2格", status: "RECYCLE_PENDING", printedAt: "2025-11-02", printedBy: "赵倩", recycleReason: "换版回收（旧版 1.0）" },
+    { id: 5, copyNo: "HC-SOP-2025-0021-03", docNo: "MG-SOP-2025-0021", fileId: 5, title: "危化品贮存管理规定", version: "1.0", holder: "样品前处理室", location: "通风柜旁夹子", status: "RECYCLE_PENDING", printedAt: "2025-11-05", printedBy: "周文控", recycleReason: "换版回收（旧版 1.0）" },
+    { id: 6, copyNo: "HC-WI-2026-0012-01", docNo: "MG-WI-2026-0012", fileId: 3, title: "LC-MS 开机点检规程", version: "1.0", holder: "仪器室1", location: "LC-MS 机旁夹", status: "IN_USE", printedAt: "2026-05-20", printedBy: "王磊" },
+    { id: 7, copyNo: "HC-SOP-2026-0019-01", docNo: "MG-SOP-2026-0019", title: "检测报告编制与签发", version: "1.0", holder: "市场部", location: "签发岗桌面", status: "RECYCLE_PENDING", printedAt: "2025-02-14", printedBy: "陈华", recycleReason: "换版回收（旧版 1.0）" },
+    { id: 8, copyNo: "HC-SOP-2026-0019-02", docNo: "MG-SOP-2026-0019", title: "检测报告编制与签发", version: "1.0", holder: "授权签字人办公室", location: "抽屉A", status: "RECYCLE_PENDING", printedAt: "2025-03-01", printedBy: "周文控", recycleReason: "换版回收（旧版 1.0）" },
+    { id: 9, copyNo: "HC-WI-2026-0004-01", docNo: "MG-WI-2026-0004", fileId: 8, title: "气相色谱日常维护指导", version: "1.0", holder: "色谱室", location: "7890B 旁", status: "IN_USE", printedAt: "2026-04-10", printedBy: "刘洋" },
+    { id: 10, copyNo: "HC-SOP-2026-0016-01", docNo: "MG-SOP-2026-0016", fileId: 9, title: "生物样本冷链运输指导书", version: "1.0", holder: "市场部", location: "冷库门口", status: "IN_USE", printedAt: "2026-07-15", printedBy: "周文控" },
   ],
 
   borrows: [

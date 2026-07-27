@@ -8,9 +8,24 @@
 import { ref, computed, reactive, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
+import { PDFDocument, StandardFonts, rgb, degrees } from "pdf-lib";
 import DCC_DATA from "../mock/data.js";
 import { DCC_KEY_TO_PATH } from "../router/modules/dcc.js";
 import { downloadWorkbook, downloadSheet, parseWorkbookFile, isExcelFile } from "../utils/excel.js";
+import {
+  getOfficeKind,
+  loadOfficePreview,
+  fetchArrayBuffer,
+  buildExcelBlob,
+  buildWordBlobFromHtml,
+  patchPptxTexts,
+} from "../utils/office.js";
+import {
+  stampImageWatermark,
+  stampDocxWatermark,
+  stampXlsxWatermark,
+  stampPptxWatermark,
+} from "../utils/officeWatermark.js";
 
 const STATUS_MAP = {
   EFFECTIVE: { text: "现行有效", cls: "tag-green" },
@@ -55,6 +70,9 @@ const STATUS_MAP = {
   CREATE: { text: "新建", cls: "tag-blue" },
   REVISE: { text: "修订", cls: "tag-orange" },
   OBSOLETE_T: { text: "作废", cls: "tag-red" },
+  BORROW: { text: "借阅", cls: "tag-blue" },
+  EXTERNAL: { text: "外发", cls: "tag-orange" },
+  ACCESS: { text: "打印/下载申请", cls: "tag-purple" },
   ELECTRONIC: { text: "电子", cls: "tag-blue" },
   HARDCOPY: { text: "纸质", cls: "tag-purple" },
   STANDARD: { text: "标准", cls: "tag-blue" },
@@ -78,6 +96,53 @@ const STATUS_MAP = {
 function statusTag(code) {
   if (code === "OBSOLETE" && arguments[1] === "type") return STATUS_MAP.OBSOLETE_T;
   return STATUS_MAP[code] || { text: code || "-", cls: "tag-gray" };
+}
+
+/** 待办审批：申请类型展示（新建/修订/作废/借阅/外发等） */
+function todoBizTag(row) {
+  const t = row && row.bizType;
+  if (t === "OBSOLETE") return STATUS_MAP.OBSOLETE_T;
+  if (t === "ACCESS") {
+    if (row.action === "DOWNLOAD") return { text: "下载申请", cls: "tag-blue" };
+    if (row.action === "PRINT") return { text: "打印申请", cls: "tag-purple" };
+    return STATUS_MAP.ACCESS;
+  }
+  return statusTag(t);
+}
+
+/** 变更类类型：仅换版 / 过期 / 废弃（新建、分发不算变更） */
+const CHANGE_KIND_CODES = ["REVISE", "REVISE_UP", "EXPIRED", "OBSOLETE"];
+
+function isChangeKindCode(t) {
+  return CHANGE_KIND_CODES.indexOf(t) >= 0;
+}
+
+/** 变更通知：变更类型（换版/过期/废弃） */
+function noticeTypeTag(row) {
+  const t = row && (row.noticeType || row.changeType);
+  if (t === "REVISE" || t === "REVISE_UP") return { text: "换版", cls: "tag-orange" };
+  if (t === "EXPIRED") return { text: "过期", cls: "tag-gray" };
+  if (t === "OBSOLETE") return { text: "废弃", cls: "tag-red" };
+  const title = String((row && row.title) || "");
+  if (title.indexOf("【换版】") >= 0 || /升版|换版/.test(title)) return { text: "换版", cls: "tag-orange" };
+  if (title.indexOf("【过期】") >= 0 || /过期|到期失效/.test(title)) return { text: "过期", cls: "tag-gray" };
+  if (title.indexOf("【废弃】") >= 0 || title.indexOf("【作废】") >= 0 || /作废|废止|废弃/.test(title))
+    return { text: "废弃", cls: "tag-red" };
+  return { text: "变更通知", cls: "tag-gray" };
+}
+
+/** 变更单：变更类型（换版/过期/废弃） */
+function changeTypeTag(row) {
+  const t = row && row.changeType;
+  if (t === "REVISE" || t === "REVISE_UP") return { text: "换版", cls: "tag-orange" };
+  if (t === "EXPIRED") return { text: "过期", cls: "tag-gray" };
+  if (t === "OBSOLETE") return { text: "废弃", cls: "tag-red" };
+  const summary = String((row && row.changeSummary) || "");
+  if (/过期|到期失效/.test(summary)) return { text: "过期", cls: "tag-gray" };
+  if (/作废|废止|废弃/.test(summary)) return { text: "废弃", cls: "tag-red" };
+  const fromVer = row && row.fromVer != null ? String(row.fromVer).trim() : "";
+  if (fromVer && fromVer !== "-") return { text: "换版", cls: "tag-orange" };
+  return { text: "换版", cls: "tag-orange" };
 }
 
 const MENUS = [
@@ -187,6 +252,7 @@ export function createDccSetup() {
     const vueRoute = useRoute();
     const router = useRouter();
     const data = reactive(DCC_DATA);
+    if (!Array.isArray(data.changeInbox)) data.changeInbox = [];
     /** 业务用 dccKey（与 meta.dccKey / 侧栏 key 一致），由 Vue Router 驱动 */
     const route = computed(() => vueRoute.meta.dccKey || "dashboard");
     const openTabs = ref([{ key: "dashboard", title: "DCC工作台" }]);
@@ -231,6 +297,8 @@ export function createDccSetup() {
       fileName: "",
       fileSize: 0,
       fileUrl: "",
+      fileType: "",
+      fileBlob: null,
     });
     const receiptDetailVisible = ref(false);
     const currentReceiptRows = ref([]);
@@ -359,6 +427,24 @@ export function createDccSetup() {
       title: "",
       status: "",
     });
+    /** 变更单 / 变更通知筛选：文件ID、编号、名称、变更类型 */
+    const changeKindOptions = [
+      { label: "换版", value: "REVISE" },
+      { label: "过期", value: "EXPIRED" },
+      { label: "废弃", value: "OBSOLETE" },
+    ];
+    const changeFilters = reactive({
+      fileId: "",
+      docNo: "",
+      title: "",
+      changeType: "",
+    });
+    const noticeFilters = reactive({
+      fileId: "",
+      docNo: "",
+      title: "",
+      changeType: "",
+    });
     const sourceTypeOptions = [
       { label: "标准", value: "STANDARD" },
       { label: "客户", value: "CUSTOMER" },
@@ -392,6 +478,8 @@ export function createDccSetup() {
       fileName: "",
       fileSize: 0,
       fileUrl: "",
+      fileType: "",
+      fileBlob: null,
       targetVersion: "",
     });
 
@@ -484,28 +572,167 @@ export function createDccSetup() {
     const toast = (text) => ElMessage.success(text);
     const warn = (text) => ElMessage.warning(text);
 
+    /** 「我的受控文件」中持有某编号文件的全部人员（按角色映射） */
+    const holdersOfControlledDoc = (docNo) => {
+      const no = String(docNo || "").trim();
+      if (!no) return [];
+      const byName = new Map();
+      (data.myDocs || []).forEach((m) => {
+        if (String(m.docNo || "") !== no) return;
+        (m.forRoles || []).forEach((rc) => {
+          const role = (data.demoRoles || []).find((r) => r.roleCode === rc);
+          if (role && role.name && !byName.has(role.name)) {
+            byName.set(role.name, { name: role.name, roleCode: role.roleCode });
+          }
+        });
+        if (m.receiptBy && !byName.has(m.receiptBy)) {
+          byName.set(m.receiptBy, { name: m.receiptBy, roleCode: "" });
+        }
+      });
+      return [...byName.values()];
+    };
+
+    /** 变更通知已读：严格按 receivers（发送人数）统计 */
+    const syncNoticeReadStats = (row) => {
+      if (!row) return;
+      const list = Array.isArray(row.receivers) ? row.receivers : [];
+      row.total = list.length;
+      row.unread = list.filter((r) => r && !r.read).length;
+      if (row.total > 0 && row.unread === 0) row.status = "CLOSED";
+      else if (row.status === "CLOSED" && row.unread > 0) row.status = "SENT";
+    };
+
+    const noticeReadText = (row) => {
+      if (!row) return "0/0";
+      if (Array.isArray(row.receivers)) {
+        const total = row.receivers.length;
+        const read = row.receivers.filter((r) => r && r.read).length;
+        return `${read}/${total}`;
+      }
+      const total = Number(row.total) || 0;
+      const unread = Number(row.unread) || 0;
+      return `${Math.max(0, total - unread)}/${total}`;
+    };
+
+    const ensureNoticeReceivers = (row, holders) => {
+      if (!row) return [];
+      const prev = Array.isArray(row.receivers) ? row.receivers : [];
+      const byName = new Map();
+      prev.forEach((r) => {
+        if (r && r.name) byName.set(r.name, { name: r.name, roleCode: r.roleCode || "", read: !!r.read });
+      });
+      (holders || []).forEach((h) => {
+        const name = typeof h === "string" ? h : h && h.name;
+        if (!name) return;
+        if (!byName.has(name)) {
+          byName.set(name, {
+            name,
+            roleCode: (typeof h === "object" && h.roleCode) || "",
+            read: false,
+          });
+        }
+      });
+      row.receivers = [...byName.values()];
+      syncNoticeReadStats(row);
+      return row.receivers;
+    };
+
+    const buildChangeNoticeSummary = (notice) => {
+      if (!notice) return "";
+      const kind = noticeTypeTag(notice).text;
+      const docNo = notice.docNo || "";
+      const title = String(notice.title || "").replace(/^【[^】]+】/, "");
+      const fromVer = notice.fromVer || notice.version || "";
+      const toVer = notice.toVer || "";
+      if (notice.noticeType === "REVISE" || kind === "换版") {
+        return `${docNo}《${title}》换版：旧版 ${fromVer || "-"} → 新版 ${toVer || "-"}，请停用旧版并配合纸质回收`;
+      }
+      if (notice.noticeType === "OBSOLETE" || kind === "废弃") {
+        return `${docNo}《${title}》已废弃（版本 ${fromVer || notice.version || "-"}），请立即停用`;
+      }
+      if (notice.noticeType === "EXPIRED" || kind === "过期") {
+        return `${docNo}《${title}》已过期失效（版本 ${fromVer || notice.version || "-"}），请停用`;
+      }
+      return notice.content || notice.changeSummary || notice.title || "变更通知";
+    };
+
+    /** 推送到工作台：被通知人可见具体文件与变更说明 */
+    const pushChangeInbox = (notice, holders, opts = {}) => {
+      if (!notice) return 0;
+      if (!Array.isArray(data.changeInbox)) data.changeInbox = [];
+      const now = opts.at || new Date().toISOString().slice(0, 16).replace("T", " ");
+      const summary = buildChangeNoticeSummary(notice);
+      let n = 0;
+      (holders || []).forEach((h) => {
+        const name = typeof h === "string" ? h : h && h.name;
+        if (!name) return;
+        const rc = (typeof h === "object" && h.roleCode) || "";
+        const exist = data.changeInbox.find(
+          (x) => x.noticeNo === notice.noticeNo && x.forName === name
+        );
+        if (exist) {
+          exist.summary = summary;
+          exist.title = notice.title;
+          exist.fromVer = notice.fromVer || notice.version || exist.fromVer;
+          exist.toVer = notice.toVer || exist.toVer;
+          exist.version = notice.version || notice.fromVer || exist.version;
+          exist.fileId = notice.fileId != null ? notice.fileId : exist.fileId;
+          exist.updatedAt = now;
+          if (opts.urged) {
+            exist.read = false;
+            exist.urged = true;
+            exist.urgeCount = (exist.urgeCount || 0) + 1;
+          }
+          n += 1;
+          return;
+        }
+        data.changeInbox.unshift({
+          id: Date.now() + n + Math.floor(Math.random() * 1000),
+          noticeNo: notice.noticeNo,
+          docNo: notice.docNo,
+          fileId: notice.fileId,
+          title: notice.title,
+          summary,
+          noticeType: notice.noticeType,
+          fromVer: notice.fromVer || notice.version || "",
+          toVer: notice.toVer || "",
+          version: notice.version || notice.fromVer || "",
+          forName: name,
+          forRole: rc,
+          read: false,
+          urged: !!opts.urged,
+          urgeCount: opts.urged ? 1 : 0,
+          createdAt: now,
+          updatedAt: now,
+        });
+        n += 1;
+      });
+      return n;
+    };
+
     const urgeNotice = (row) => {
       if (!row) return;
-      const total = row.total || 0;
-      let unread = row.unread || 0;
-      if (row.status === "CLOSED" && unread === 0) {
-        row.status = "SENT";
-        unread = Math.min(total, Math.max(1, Math.ceil(total * 0.25)));
-        row.unread = unread;
-      }
-      if (!unread) {
-        warn("该通知已全部已读，无需催办");
+      const holders = holdersOfControlledDoc(row.docNo);
+      if (!holders.length) {
+        warn("「我的受控文件」中暂无持有该文件的人员，无法催办");
         return;
       }
+      ensureNoticeReceivers(row, holders);
       row.urgeCount = (row.urgeCount || 0) + 1;
       row.lastUrgeAt = new Date().toISOString().slice(0, 16).replace("T", " ");
+      row.lastUrgeTargets = holders.map((h) => h.name).join("、");
       if (row.status === "CLOSED") row.status = "SENT";
-      // 催办后模拟部分人员打开通知
-      const readBack = Math.min(unread - 1, Math.max(1, Math.floor(unread * 0.3)));
-      if (readBack > 0 && unread > 1) row.unread = unread - readBack;
+      // 催办不改已读统计口径：仍按发送人数；仅向持有人推送工作台提醒
+      pushChangeInbox(row, holders, { urged: true, at: row.lastUrgeAt });
+      const preview =
+        holders.length <= 4
+          ? holders.map((h) => h.name).join("、")
+          : holders
+              .slice(0, 4)
+              .map((h) => h.name)
+              .join("、") + ` 等 ${holders.length} 人`;
       toast(
-        `已催办 ${row.noticeNo || ""}：向 ${unread} 位未读人员发送提醒（第 ${row.urgeCount} 次）` +
-          (row.lastUrgeAt ? ` · ${row.lastUrgeAt}` : "")
+        `已催办 ${row.noticeNo || ""}：已向「我的受控文件」持有人推送工作台通知（${preview}）· 第 ${row.urgeCount} 次 · 已读 ${noticeReadText(row)}`
       );
     };
 
@@ -646,7 +873,7 @@ export function createDccSetup() {
       input.type = "file";
       input.accept =
         opts.accept ||
-        ".pdf,.doc,.docx,.xls,.xlsx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+        ".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation";
       input.onchange = () => {
         const file = input.files && input.files[0];
         if (!file) return;
@@ -688,6 +915,8 @@ export function createDccSetup() {
           createForm.fileName = meta.fileName;
           createForm.fileSize = meta.fileSize;
           createForm.fileUrl = meta.fileUrl;
+          createForm.fileType = meta.fileType || "";
+          createForm.fileBlob = meta.fileBlob || null;
         },
         { prevUrl: createForm.fileUrl, maxMb: 50 }
       );
@@ -699,9 +928,149 @@ export function createDccSetup() {
           extForm.fileName = meta.fileName;
           extForm.fileSize = meta.fileSize;
           extForm.fileUrl = meta.fileUrl;
+          extForm.fileType = meta.fileType || "";
+          extForm.fileBlob = meta.fileBlob || null;
         },
         { prevUrl: extForm.fileUrl, maxMb: 50 }
       );
+    };
+
+    /** 预览附件类型：pdf / image / word / excel / ppt / other / none */
+    const previewFileKind = (doc) => {
+      if (!doc || (!doc.fileUrl && !doc.fileBlob)) return "none";
+      return getOfficeKind(doc.fileName, doc.fileType);
+    };
+
+    const officePreview = reactive({
+      loading: false,
+      error: "",
+      kind: "",
+      html: "",
+      sheets: [],
+      sheetIndex: 0,
+      slides: [],
+      slideIndex: 0,
+    });
+
+    const resetOfficePreview = () => {
+      officePreview.loading = false;
+      officePreview.error = "";
+      officePreview.kind = "";
+      officePreview.html = "";
+      officePreview.sheets = [];
+      officePreview.sheetIndex = 0;
+      officePreview.slides = [];
+      officePreview.slideIndex = 0;
+    };
+
+    const ensureOfficePreview = async (doc) => {
+      resetOfficePreview();
+      if (!doc || !doc.fileUrl) return;
+      const kind = previewFileKind(doc);
+      if (kind !== "word" && kind !== "excel" && kind !== "ppt") return;
+      officePreview.loading = true;
+      officePreview.kind = kind;
+      try {
+        const r = await loadOfficePreview(doc.fileUrl, doc.fileName, doc.fileType);
+        officePreview.kind = r.kind;
+        officePreview.html = r.html || "";
+        officePreview.sheets = r.sheets || [];
+        officePreview.slides = r.slides || [];
+        officePreview.sheetIndex = 0;
+        officePreview.slideIndex = 0;
+      } catch (e) {
+        console.warn("office preview", e);
+        officePreview.error = (e && e.message) || "Office 预览失败";
+      } finally {
+        officePreview.loading = false;
+      }
+    };
+
+    const buildOfficeOpenBodyHtml = (kind, preview) => {
+      if (kind === "word") {
+        return `<div class="office-paper">${preview.html || "<p>（空）</p>"}</div>`;
+      }
+      if (kind === "excel") {
+        const sheets = preview.sheets || [];
+        return sheets
+          .map(
+            (s, i) =>
+              `<div class="office-paper"><h3>工作表 ${i + 1}：${s.name || ""}</h3>${s.html || ""}</div>`
+          )
+          .join("");
+      }
+      if (kind === "ppt") {
+        const slides = preview.slides || [];
+        return slides
+          .map(
+            (s) =>
+              `<div class="office-paper slide"><h3>幻灯片 ${s.index}</h3>${s.html || ""}</div>`
+          )
+          .join("");
+      }
+      return "";
+    };
+
+    /** 打开附件：用带水印的查看页（勿直接 window.open 裸文件，否则水印丢失） */
+    const openUploadedFile = async (doc) => {
+      const d = doc || currentDoc.value;
+      if (!d || !d.fileUrl) return warn("暂无上传附件");
+      const kind = previewFileKind(d);
+      const wm = resolveStatusWm(d, previewScene.value);
+      const tile = `${data.user.name || ""} · ${data.user.userNo || ""} · ${d.docNo || ""} · ${demoToday()}`;
+      const corner = wm.corner || "";
+      const secret = wm.secret ? "机密文件" : "";
+      const title = (d.fileName || d.title || d.docNo || "受控附件").replace(/[<>&"]/g, "");
+      const src = String(d.fileUrl).replace(/"/g, "&quot;");
+      let body = "";
+      if (kind === "pdf") {
+        body = `<iframe class="file" src="${src}" title="PDF"></iframe>`;
+      } else if (kind === "image") {
+        body = `<div class="imgwrap"><img src="${src}" alt="${title}"/></div>`;
+      } else if (kind === "word" || kind === "excel" || kind === "ppt") {
+        try {
+          const r = await loadOfficePreview(d.fileUrl, d.fileName, d.fileType);
+          body = `<div class="office-scroll">${buildOfficeOpenBodyHtml(kind, r)}</div>`;
+        } catch (e) {
+          body = `<div class="hint">Office 预览失败，请<a href="${src}" download="${title}">下载后打开</a></div>`;
+        }
+      } else {
+        body = `<div class="hint">该格式请<a href="${src}" download="${title}">下载后打开</a>；下方仍显示受控水印。</div>`;
+      }
+      const html = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"/><title>${title} · 受控预览</title>
+<style>
+html,body{margin:0;height:100%;background:#525659;font-family:"Microsoft YaHei",sans-serif;overflow:hidden}
+.stage{position:relative;width:100%;height:100%}
+.file{position:absolute;inset:0;width:100%;height:100%;border:0;z-index:1}
+.imgwrap{position:absolute;inset:0;z-index:1;display:flex;align-items:center;justify-content:center;overflow:auto}
+.imgwrap img{max-width:96%;max-height:96%;object-fit:contain;box-shadow:0 2px 16px rgba(0,0,0,.35)}
+.office-scroll{position:absolute;inset:0 0 36px 0;z-index:1;overflow:auto;padding:20px 16px 40px;box-sizing:border-box}
+.office-paper{max-width:860px;margin:0 auto 18px;background:#fff;padding:28px 32px;box-shadow:0 2px 14px rgba(0,0,0,.25);color:#222;line-height:1.7;font-size:14px}
+.office-paper.slide{min-height:280px;background:linear-gradient(180deg,#fff,#f7f9fc)}
+.office-paper table{border-collapse:collapse;width:100%;font-size:12px}
+.office-paper td,.office-paper th{border:1px solid #d9d9d9;padding:4px 6px}
+.hint{position:absolute;inset:0;z-index:1;display:flex;align-items:center;justify-content:center;color:#fff;font-size:15px}
+.hint a{color:#69b1ff;margin:0 6px}
+.wm{position:absolute;inset:0;z-index:6;pointer-events:none;background-image:repeating-linear-gradient(-30deg,transparent,transparent 80px,rgba(0,0,0,.04) 80px,rgba(0,0,0,.04) 160px)}
+.wm-text{position:absolute;inset:0;z-index:7;pointer-events:none;display:flex;flex-wrap:wrap;align-content:space-around;justify-content:space-around;opacity:.22;transform:rotate(-24deg) scale(1.15);font-size:14px;color:#000}
+.wm-text span{margin:22px;white-space:nowrap}
+.wm-corner{position:absolute;top:22px;left:50%;z-index:9;pointer-events:none;transform:translateX(-50%) rotate(-6deg);color:rgba(196,30,22,.92);font-size:16px;font-weight:900;letter-spacing:.22em;border:3px solid rgba(196,30,22,.88);padding:8px 18px;background:rgba(255,255,255,.42);white-space:nowrap;box-sizing:border-box}
+.wm-secret{position:absolute;inset:0;z-index:8;pointer-events:none;display:flex;align-items:center;justify-content:center}
+.wm-secret span{color:rgba(200,40,30,.2);font-size:40px;font-weight:800;letter-spacing:.55em;transform:rotate(-34deg) scaleX(1.7);border:2px solid rgba(200,40,30,.22);padding:8px 24px;white-space:nowrap}
+.bar{position:absolute;left:0;right:0;bottom:0;z-index:10;background:rgba(0,0,0,.55);color:#fff;font-size:12px;padding:8px 14px;display:flex;justify-content:space-between;gap:12px}
+.bar a{color:#91caff}
+</style></head><body><div class="stage">
+${body}
+<div class="wm"></div>
+<div class="wm-text">${Array.from({ length: 14 }, () => `<span>${tile}</span>`).join("")}</div>
+${corner ? `<div class="wm-corner">${corner}</div>` : ""}
+${secret ? `<div class="wm-secret"><span>${secret}</span></div>` : ""}
+<div class="bar"><span>受控打开 · 水印强制叠加 · ${tile}</span><a href="${src}" download="${title}">下载原文件</a></div>
+</div></body></html>`;
+      const url = URL.createObjectURL(new Blob([html], { type: "text/html;charset=utf-8" }));
+      const win = window.open(url, "_blank", "noopener");
+      if (!win) warn("浏览器拦截了弹窗，请允许后重试");
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
     };
 
     const currentRole = computed(() => data.demoRoles.find((r) => r.roleCode === roleCode.value) || data.demoRoles[0]);
@@ -732,8 +1101,14 @@ export function createDccSetup() {
     };
     const leaderRoleForDept = (dept) => LEADER_ROLE_BY_DEPT[dept] || "DCC_CONTROLLER";
 
-    /** 演示「今天」：用于待生效→现行、复审顺延、借阅/外发到期 */
-    const demoToday = () => "2026-07-24";
+    /** 系统「今天」（本地日历日）：待生效→现行、复审顺延、借阅/外发到期均按此比较 */
+    const demoToday = () => {
+      const d = new Date();
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${y}-${m}-${day}`;
+    };
     const addMonthsYmd = (ymd, months) => {
       const d = new Date(String(ymd || demoToday()) + "T00:00:00");
       d.setMonth(d.getMonth() + Number(months || 0));
@@ -770,16 +1145,32 @@ export function createDccSetup() {
       return [];
     });
 
-    /** 关联主档元数据（变更单等列表用） */
+    /** 关联主档元数据：变更单/通知/纸质回收优先挂旧版（fromVer/version/fileId） */
     const docMeta = (row) => {
       if (!row) return {};
-      if (row.fileId != null) {
+      if (row.fileId != null && row.fileId !== "") {
         const byFid = data.documents.find((d) => d.fileId === row.fileId || d.id === row.fileId);
         if (byFid) return byFid;
       }
       if (row.docNo) {
         const docs = data.documents.filter((d) => d.docNo === row.docNo);
-        const eff = docs.find((d) => d.status === "EFFECTIVE");
+        const verHint =
+          row.fromVer && String(row.fromVer) !== "-"
+            ? row.fromVer
+            : row.version && String(row.version) !== "-"
+              ? row.version
+              : "";
+        if (verHint) {
+          const byVer = docs.find((d) => String(d.version) === String(verHint));
+          if (byVer) return byVer;
+        }
+        // 变更/回收场景：优先已替代/已废止旧档，避免落到现行新版
+        const isChangeCtx = !!(row.changeNo || row.noticeNo || row.copyNo || row.recycleReason);
+        if (isChangeCtx) {
+          const old = docs.find((d) => d.status === "SUPERSEDED" || d.status === "OBSOLETE");
+          if (old) return old;
+        }
+        const eff = docs.find((d) => d.status === "EFFECTIVE" || d.status === "REVISING");
         if (eff) return eff;
         if (docs.length) return docs[0];
       }
@@ -790,6 +1181,20 @@ export function createDccSetup() {
       if (row.ownerDept) return deptNames(row.ownerDept);
       const doc = docMeta(row);
       return deptNames(doc.ownerDept || doc.dept) || "-";
+    };
+
+    /** 变更单：变更内容说明（优先单上字段，否则回查主档/申请原因） */
+    const changeSummaryOf = (row) => {
+      if (!row) return "-";
+      if (row.changeSummary && String(row.changeSummary).trim()) return String(row.changeSummary).trim();
+      const doc = docMeta(row);
+      if (doc && doc.changeSummary && String(doc.changeSummary).trim()) {
+        return String(doc.changeSummary).trim();
+      }
+      const fromVer = row.fromVer || "-";
+      const toVer = row.toVer || "-";
+      if (fromVer === "-" || fromVer === "") return `新建发布至 ${toVer}`;
+      return `修订升版 ${fromVer} → ${toVer}`;
     };
 
     const roleMyDocsAll = computed(() => {
@@ -850,10 +1255,20 @@ export function createDccSetup() {
       return list.filter((d) => d.docNo && ever.has(d.docNo));
     });
 
-    /** 变更通知：文控全部；负责人仅与本人受控文件关联的 */
+    /** 是否为变更类通知（排除新建/分发等非变更） */
+    const isChangeNoticeRow = (n) => {
+      if (!n) return false;
+      const t = n.noticeType || n.changeType;
+      if (t === "CREATE" || t === "NEW" || t === "DISTRIBUTE" || t === "DIST") return false;
+      if (isChangeKindCode(t)) return true;
+      const tag = noticeTypeTag(n);
+      return tag.text === "换版" || tag.text === "过期" || tag.text === "废弃";
+    };
+
+    /** 变更通知：仅换版/过期/废弃；文控全部；其他人仅与本人受控文件关联 */
     const roleNotices = computed(() => {
       const code = roleCode.value;
-      const list = data.notices || [];
+      const list = (data.notices || []).filter(isChangeNoticeRow);
       if (codeIsCtrl(code)) return list;
       const ever = myEverDocNos.value;
       return list.filter((n) => {
@@ -903,9 +1318,82 @@ export function createDccSetup() {
       const ever = myEverDocNos.value;
       return (rows || []).filter((r) => r.docNo && ever.has(r.docNo));
     };
-    /** 变更单：文控全部；其他人仅与本人受控文件关联的 */
-    const roleChanges = computed(() => filterByMyDocs(data.changes));
+    /** 变更单：仅换版/过期/废弃（新建不算变更）；文控全部；其他人仅关联本人受控文件 */
+    const roleChanges = computed(() => {
+      const list = (data.changes || []).filter((c) => {
+        const t = c && c.changeType;
+        if (t === "CREATE" || t === "NEW") return false;
+        if (isChangeKindCode(t)) return true;
+        const tag = changeTypeTag(c);
+        return tag.text === "换版" || tag.text === "过期" || tag.text === "废弃";
+      });
+      return filterByMyDocs(list);
+    });
     const roleRecordChanges = roleChanges;
+
+    const matchChangeListFilters = (row, f) => {
+      const fid = String((f && f.fileId) || "").trim();
+      const no = String((f && f.docNo) || "").trim().toUpperCase();
+      const title = String((f && f.title) || "").trim().toLowerCase();
+      const ct = (f && f.changeType) || "";
+      if (fid) {
+        const idStr = String(fileIdOf(row));
+        if (idStr === "-" || idStr.indexOf(fid) < 0) return false;
+      }
+      if (no) {
+        const docNo = String(row.docNo || "").toUpperCase();
+        const noticeNo = String(row.noticeNo || row.changeNo || "").toUpperCase();
+        if (docNo.indexOf(no) < 0 && noticeNo.indexOf(no) < 0) return false;
+      }
+      if (title) {
+        const t = String(row.title || "").toLowerCase();
+        if (t.indexOf(title) < 0) return false;
+      }
+      if (ct) {
+        const raw = row.changeNo != null ? row.changeType : row.noticeType || row.changeType || "";
+        const norm = raw === "REVISE_UP" ? "REVISE" : raw;
+        if (norm === ct) return true;
+        const tag = row.changeNo != null ? changeTypeTag(row) : noticeTypeTag(row);
+        const want = changeKindOptions.find((o) => o.value === ct);
+        if (!want || tag.text !== want.label) return false;
+      }
+      return true;
+    };
+
+    const filteredChanges = computed(() =>
+      (roleChanges.value || []).filter((r) => matchChangeListFilters(r, changeFilters))
+    );
+    const filteredNotices = computed(() =>
+      (roleNotices.value || []).filter((r) => matchChangeListFilters(r, noticeFilters))
+    );
+
+    const resetChangeFilters = () => {
+      changeFilters.fileId = "";
+      changeFilters.docNo = "";
+      changeFilters.title = "";
+      changeFilters.changeType = "";
+      listPage.changes = 1;
+    };
+    const resetNoticeFilters = () => {
+      noticeFilters.fileId = "";
+      noticeFilters.docNo = "";
+      noticeFilters.title = "";
+      noticeFilters.changeType = "";
+      listPage.notices = 1;
+    };
+
+    watch(
+      () => [changeFilters.fileId, changeFilters.docNo, changeFilters.title, changeFilters.changeType],
+      () => {
+        listPage.changes = 1;
+      }
+    );
+    watch(
+      () => [noticeFilters.fileId, noticeFilters.docNo, noticeFilters.title, noticeFilters.changeType],
+      () => {
+        listPage.notices = 1;
+      }
+    );
     const roleRecordDists = computed(() => filterByMyDocs(data.distributions));
     const roleRecordHardCopies = computed(() => filterByMyDocs(data.hardCopies));
     const roleRecordBorrows = computed(() => filterByMyDocs(data.borrows));
@@ -974,6 +1462,32 @@ export function createDccSetup() {
       }).length;
     });
 
+    /** 工作台：当前角色收到的变更通知（催办/发送） */
+    const roleChangeInbox = computed(() => {
+      const name = data.user.name;
+      const code = roleCode.value;
+      return (data.changeInbox || [])
+        .filter((x) => x.forName === name || x.forRole === code)
+        .sort((a, b) => String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || "")));
+    });
+    const roleChangeInboxUnread = computed(() => roleChangeInbox.value.filter((x) => !x.read).length);
+
+    const markChangeInboxRead = (row) => {
+      if (!row || row.read) return;
+      row.read = true;
+      row.readAt = new Date().toISOString().slice(0, 16).replace("T", " ");
+      const notice = (data.notices || []).find((n) => n.noticeNo === row.noticeNo);
+      if (notice) {
+        ensureNoticeReceivers(notice, []);
+        const me = data.user.name;
+        (notice.receivers || []).forEach((r) => {
+          if (r.name === me) r.read = true;
+        });
+        syncNoticeReadStats(notice);
+      }
+      toast("已阅：" + (row.summary || row.title || row.noticeNo || ""));
+    };
+
     const roleStats = computed(() => {
       const code = roleCode.value;
       const isCtrl = code === "DCC_CONTROLLER" || code === "DCC_ADMIN";
@@ -998,6 +1512,7 @@ export function createDccSetup() {
         hardRecycle: isCtrl ? data.hardCopies.filter((x) => x.status === "RECYCLE_PENDING").length : 0,
         todoTrain: pendTrain,
         todoAccess: pendAccess,
+        changeNoticeUnread: roleChangeInboxUnread.value,
         totalDocs: isCtrl
           ? data.documents.length
           : roleEffectiveCount.value,
@@ -1290,20 +1805,20 @@ export function createDccSetup() {
       return doc.accessDomain === domain;
     };
 
-    /** 展示文件ID（纯数字流水）；关联行无值时按编号回查主档 */
+    /** 展示文件ID：优先行内 fileId；变更/回收按旧版主档回查 */
     const fileIdOf = (row) => {
       if (!row) return "-";
       if (row.fileId != null && row.fileId !== "") return row.fileId;
-      if (row.docNo && row.docNo !== "-") {
-        const doc = data.documents.find((d) => d.docNo === row.docNo);
-        if (doc && (doc.fileId != null || doc.id != null)) return doc.fileId != null ? doc.fileId : doc.id;
+      // 外来文件台账：优先 fileId，否则 id
+      if (row.extNo != null) return row.fileId != null ? row.fileId : row.id != null ? row.id : "-";
+      const meta = docMeta(row);
+      if (meta && meta !== row && (meta.fileId != null || meta.id != null)) {
+        return meta.fileId != null ? meta.fileId : meta.id;
       }
       // 主档行本身
       if (row.id != null && data.documents.some((d) => d.id === row.id && d.docNo === row.docNo)) {
-        return row.id;
+        return row.fileId != null ? row.fileId : row.id;
       }
-      // 外来文件台账：优先 fileId，否则 id
-      if (row.extNo != null) return row.fileId != null ? row.fileId : row.id != null ? row.id : "-";
       return "-";
     };
 
@@ -1474,10 +1989,11 @@ export function createDccSetup() {
   }
   .wm-text span { margin: 28px; white-space: nowrap; }
   .wm-status-corner {
-    position: fixed; top: 18px; left: 18px; z-index: 4; pointer-events: none;
-    color: rgba(200,40,30,.62); font-size: 13px; font-weight: 700; letter-spacing: .18em;
-    border: 1.5px solid rgba(200,40,30,.5); padding: 4px 10px; transform: rotate(-14deg);
-    background: rgba(255,255,255,.3); white-space: nowrap;
+    position: fixed; top: 18px; left: 50%; z-index: 4; pointer-events: none;
+    color: rgba(196,30,22,.92); font-size: 15px; font-weight: 900; letter-spacing: .22em;
+    border: 3px solid rgba(196,30,22,.88); padding: 7px 16px;
+    transform: translateX(-50%) rotate(-6deg);
+    background: rgba(255,255,255,.42); white-space: nowrap; box-sizing: border-box;
   }
   .wm-status-secret {
     position: fixed; inset: 0; z-index: 3; pointer-events: none;
@@ -1546,7 +2062,134 @@ export function createDccSetup() {
       }, 400);
     };
 
-    const downloadWatermarkFile = (doc, mode, scene) => {
+    const triggerUrlDownload = (filename, url) => {
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename || "download";
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => a.remove(), 400);
+    };
+
+    /** 将平铺水印 + 顶部红章写入 PDF 各页（标准字体仅 ASCII，中文状态用英文码） */
+    const stampAccessWatermarkOntoPdf = async (doc, scene) => {
+      const res = await fetch(doc.fileUrl);
+      const bytes = await res.arrayBuffer();
+      const pdfDoc = await PDFDocument.load(bytes);
+      const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+      const status = resolveStatusWm(doc, scene);
+      const cornerEn =
+        {
+          借阅: "BORROW",
+          外发: "EXTERNAL",
+          初级文件: "DRAFT",
+          修订: "REVISE",
+          失效: "VOID",
+          审批完成: "APPROVED",
+          已分发: "DISTRIBUTED",
+        }[status.corner] || status.corner || "";
+      const tile = `${data.user.userNo || "USER"} ${doc.docNo || ""}`;
+      pdfDoc.getPages().forEach((page) => {
+        const { width, height } = page.getSize();
+        for (let y = 48; y < height - 20; y += 72) {
+          for (let x = 24; x < width - 40; x += 150) {
+            page.drawText(tile, {
+              x,
+              y,
+              size: 8,
+              font,
+              color: rgb(0.45, 0.45, 0.45),
+              opacity: 0.22,
+              rotate: degrees(-24),
+            });
+          }
+        }
+        if (cornerEn) {
+          const label = String(cornerEn);
+          const fontSize = 14;
+          const tw = font.widthOfTextAtSize(label, fontSize);
+          const padX = 12;
+          const padY = 7;
+          const boxW = tw + padX * 2;
+          const boxH = fontSize + padY * 2;
+          const boxX = Math.max(24, width / 2 - boxW / 2);
+          const boxY = height - 28 - boxH;
+          const red = rgb(0.77, 0.12, 0.09);
+          // 红色边框
+          page.drawRectangle({
+            x: boxX,
+            y: boxY,
+            width: boxW,
+            height: boxH,
+            borderWidth: 2.5,
+            borderColor: red,
+            color: rgb(1, 1, 1),
+            opacity: 0.35,
+            borderOpacity: 0.9,
+          });
+          // 加粗效果：叠绘两遍
+          const tx = boxX + padX;
+          const ty = boxY + padY + 1;
+          page.drawText(label, { x: tx, y: ty, size: fontSize, font, color: red, opacity: 0.92 });
+          page.drawText(label, { x: tx + 0.35, y: ty, size: fontSize, font, color: red, opacity: 0.92 });
+        }
+        if (status.secret) {
+          page.drawText("SECRET", {
+            x: width / 2 - 40,
+            y: height / 2,
+            size: 26,
+            font,
+            color: rgb(0.78, 0.16, 0.12),
+            opacity: 0.18,
+            rotate: degrees(-34),
+          });
+        }
+      });
+      const out = await pdfDoc.save();
+      return URL.createObjectURL(new Blob([out], { type: "application/pdf" }));
+    };
+
+    const guessDownloadName = (doc) => {
+      if (doc.fileName) return doc.fileName;
+      const kind = previewFileKind(doc);
+      const base = `${doc.docNo || "DOC"}_V${doc.version || "1"}`;
+      if (kind === "pdf") return base + ".pdf";
+      if (kind === "image") return base + ".png";
+      return base;
+    };
+
+    const logAccess = (doc, action) => {
+      data.accessLogs.unshift({
+        id: Date.now(),
+        user: data.user.name,
+        docNo: doc.docNo,
+        version: doc.version,
+        action,
+        time: new Date().toISOString().slice(0, 16).replace("T", " "),
+        ip: "192.168.1.10",
+      });
+    };
+
+    const buildDownloadTileText = (doc) => {
+      const stamp = demoToday();
+      return [data.user.name, data.user.userNo, doc.docNo, stamp]
+        .map((s) => String(s || "").trim())
+        .filter(Boolean)
+        .join("  ·  ");
+    };
+
+    /** 读取附件字节：优先内存 File/Blob，避免 blob URL 失效 */
+    const readDocArrayBuffer = async (doc) => {
+      if (doc && doc.fileBlob) {
+        if (doc.fileBlob instanceof ArrayBuffer) return doc.fileBlob;
+        if (typeof doc.fileBlob.arrayBuffer === "function") return doc.fileBlob.arrayBuffer();
+      }
+      if (!doc || !doc.fileUrl) throw new Error("无附件");
+      return fetchArrayBuffer(doc.fileUrl);
+    };
+
+    /** 有真实附件则下载并打水印；水印失败时仍下载原文件（不再回退 HTML） */
+    const downloadWatermarkFile = async (doc, mode, scene) => {
       if (!doc || !doc.docNo) {
         warn("未选择文件");
         return;
@@ -1555,20 +2198,156 @@ export function createDccSetup() {
         mode === "PRINT"
           ? `HC-${doc.docNo.replace(/^MG-/, "")}-${String(Math.floor(Math.random() * 90) + 10)}`
           : "";
-      const html = buildWatermarkHtml(doc, mode, copyNo, scene || previewScene.value);
+      const sc = scene || previewScene.value;
+      const tile = buildDownloadTileText(doc);
+      const suffix = mode === "PRINT" ? "_受控打印" : "_水印";
+      const hasRealFile = !!(doc.fileUrl || doc.fileBlob);
+
+      if (hasRealFile) {
+        const kind = previewFileKind(doc);
+        try {
+          if (kind === "pdf") {
+            const stamped = await stampAccessWatermarkOntoPdf(doc, sc);
+            const name = guessDownloadName(doc).replace(/\.pdf$/i, "") + suffix + ".pdf";
+            triggerUrlDownload(name, stamped);
+            setTimeout(() => URL.revokeObjectURL(stamped), 60000);
+            logAccess(doc, mode === "PRINT" ? "PRINT" : "DOWNLOAD");
+            toast(`已下载真实 PDF（每页含水印）：${name}`);
+            return copyNo;
+          }
+
+          const buf = await readDocArrayBuffer(doc);
+          let outBlob = null;
+          let name = guessDownloadName(doc);
+          const statusWm = resolveStatusWm(doc, sc);
+
+          // 用 zip 内容校正类型，避免扩展名/MIME 识别错误导致未打水印
+          let effectiveKind = kind;
+          let isZip = false;
+          try {
+            const z = await (await import("jszip")).default.loadAsync(buf);
+            isZip = true;
+            const keys = Object.keys(z.files).map((k) => k.replace(/\\/g, "/").toLowerCase());
+            if (keys.some((k) => k === "word/document.xml" || /(^|\/)word\/document\.xml$/.test(k)))
+              effectiveKind = "word";
+            else if (keys.some((k) => k === "xl/workbook.xml" || /(^|\/)xl\/workbook\.xml$/.test(k)))
+              effectiveKind = "excel";
+            else if (
+              keys.some((k) => k === "ppt/presentation.xml" || /(^|\/)ppt\/presentation\.xml$/.test(k)) ||
+              keys.some((k) => /(^|\/)ppt\//.test(k))
+            )
+              effectiveKind = "ppt";
+          } catch (_) {
+            /* 非 zip 则沿用扩展名判断 */
+          }
+
+          // 旧版二进制 Office：仍下载原文件，不回退 HTML
+          if (!isZip && kind === "ppt") {
+            const base = (name || "file").replace(/\.[^.]+$/i, "") || doc.docNo || "DOC";
+            outBlob = new Blob([buf], {
+              type: doc.fileType || "application/vnd.ms-powerpoint",
+            });
+            name = base + suffix + (/\.pptx$/i.test(doc.fileName || "") ? ".pptx" : ".ppt");
+            const url = URL.createObjectURL(outBlob);
+            triggerUrlDownload(name, url);
+            setTimeout(() => URL.revokeObjectURL(url), 60000);
+            logAccess(doc, mode === "PRINT" ? "PRINT" : "DOWNLOAD");
+            warn("旧版 .ppt 无法写入水印，已下载原文件；建议另存为 .pptx 后重新上传");
+            return copyNo;
+          }
+          if (!isZip && kind === "word" && /\.doc$/i.test(doc.fileName || name) && !/\.docx$/i.test(doc.fileName || name)) {
+            throw new Error("旧版 .doc 无法写入水印，请上传 .docx");
+          }
+          if (!isZip && kind === "excel" && /\.xls$/i.test(doc.fileName || name) && !/\.xlsx$/i.test(doc.fileName || name)) {
+            throw new Error("旧版 .xls 无法写入水印，请上传 .xlsx");
+          }
+
+          if (effectiveKind === "image") {
+            outBlob = await stampImageWatermark(buf, tile, doc.fileType);
+            const isJpg =
+              /\.jpe?g$/i.test(name) || String(doc.fileType || "").indexOf("jpeg") >= 0;
+            const base = String(name).replace(/\.[^.]+$/, "") || doc.docNo || "IMG";
+            name = base + suffix + (isJpg ? ".jpg" : ".png");
+          } else if (effectiveKind === "word") {
+            outBlob = await stampDocxWatermark(buf, tile, statusWm);
+            const base = name.replace(/\.[^.]+$/i, "") || doc.docNo || "DOC";
+            name = base + suffix + ".docx";
+          } else if (effectiveKind === "excel") {
+            outBlob = await stampXlsxWatermark(buf, tile, statusWm);
+            const base = name.replace(/\.[^.]+$/i, "") || doc.docNo || "DOC";
+            name = base + suffix + ".xlsx";
+          } else if (effectiveKind === "ppt") {
+            try {
+              outBlob = await stampPptxWatermark(buf, tile, statusWm);
+              const base = name.replace(/\.[^.]+$/i, "") || doc.docNo || "DOC";
+              name = base + suffix + ".pptx";
+            } catch (pptErr) {
+              // 水印失败也必须给出真实 pptx，绝不回退 HTML
+              console.warn("ppt watermark", pptErr);
+              const base = name.replace(/\.[^.]+$/i, "") || doc.docNo || "DOC";
+              name = base + suffix + ".pptx";
+              outBlob = new Blob([buf], {
+                type:
+                  doc.fileType ||
+                  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+              });
+              const url = URL.createObjectURL(outBlob);
+              triggerUrlDownload(name, url);
+              setTimeout(() => URL.revokeObjectURL(url), 60000);
+              logAccess(doc, mode === "PRINT" ? "PRINT" : "DOWNLOAD");
+              warn((pptErr && pptErr.message) || "PPT 水印写入失败，已下载原文件");
+              return copyNo;
+            }
+          } else {
+            outBlob = new Blob([buf], { type: doc.fileType || "application/octet-stream" });
+          }
+
+          if (!outBlob || !outBlob.size) throw new Error("水印文件生成结果为空");
+          const url = URL.createObjectURL(outBlob);
+          triggerUrlDownload(name, url);
+          setTimeout(() => URL.revokeObjectURL(url), 60000);
+          logAccess(doc, mode === "PRINT" ? "PRINT" : "DOWNLOAD");
+          const tip =
+            effectiveKind === "word"
+              ? "Word 已加水印（正文可见灰字+图片" + (statusWm.corner ? "，含红章「" + statusWm.corner + "」" : "") + "）"
+              : effectiveKind === "excel"
+                ? "Excel 普通水印已保留" + (statusWm.corner ? "，并加红章「" + statusWm.corner + "」" : "")
+                : effectiveKind === "ppt"
+                  ? "PPT 每页已加图片水印" + (statusWm.corner ? "（含红章「" + statusWm.corner + "」）" : "")
+                  : "已下载原附件";
+          toast(`${tip}：${name}`);
+          return copyNo;
+        } catch (e) {
+          console.warn("download real file", e);
+          // 有真实附件时：最后手段下载原文件，禁止回退 HTML
+          try {
+            const buf = await readDocArrayBuffer(doc);
+            let name = guessDownloadName(doc) || doc.docNo || "download";
+            if (kind === "ppt" && !/\.pptx?$/i.test(name)) name = name + ".pptx";
+            const base = name.replace(/\.[^.]+$/i, "") || doc.docNo || "DOC";
+            const ext = (name.match(/(\.[^.]+)$/) || [])[1] || "";
+            name = base + suffix + ext;
+            const url = URL.createObjectURL(
+              new Blob([buf], { type: doc.fileType || "application/octet-stream" })
+            );
+            triggerUrlDownload(name, url);
+            setTimeout(() => URL.revokeObjectURL(url), 60000);
+            logAccess(doc, mode === "PRINT" ? "PRINT" : "DOWNLOAD");
+            warn((e && e.message) || "水印失败，已下载原附件");
+            return copyNo;
+          } catch (e2) {
+            warn((e && e.message) || (e2 && e2.message) || "附件下载失败");
+            return copyNo;
+          }
+        }
+      }
+
+      const html = buildWatermarkHtml(doc, mode, copyNo, sc);
       const tag = mode === "PRINT" ? "受控打印" : "水印下载";
       const filename = `${doc.docNo}_V${doc.version}_${tag}${copyNo ? "_" + copyNo : ""}.html`;
       triggerBlobDownload(filename, html, "text/html;charset=utf-8");
-      data.accessLogs.unshift({
-        id: Date.now(),
-        user: data.user.name,
-        docNo: doc.docNo,
-        version: doc.version,
-        action: mode === "PRINT" ? "PRINT" : "DOWNLOAD",
-        time: "2026-07-22 09:50",
-        ip: "192.168.1.10",
-      });
-      toast(`已下载到本地：${filename}（强制水印，可用浏览器打开或另存 PDF）`);
+      logAccess(doc, mode === "PRINT" ? "PRINT" : "DOWNLOAD");
+      toast(`已下载到本地：${filename}（无上传附件时的演示件）`);
       return copyNo;
     };
 
@@ -1722,7 +2501,7 @@ export function createDccSetup() {
       return true;
     };
 
-    const openPreview = (row, scene) => {
+    const openPreview = async (row, scene) => {
       const doc = resolveDocMeta(row || currentDoc.value);
       const borrowOk =
         (scene === "BORROW" || hasActiveBorrowPreview(doc && doc.docNo)) &&
@@ -1735,6 +2514,7 @@ export function createDccSetup() {
       currentDoc.value = doc;
       previewScene.value = scene || "";
       previewVisible.value = true;
+      await ensureOfficePreview(doc);
     };
 
 
@@ -1882,6 +2662,10 @@ export function createDccSetup() {
       if (!docNo) return 0;
       const version = opts.version != null ? opts.version : (doc && doc.version) || "-";
       const title = opts.title || (doc && doc.title) || "-";
+      const fileId =
+        opts.fileId != null
+          ? opts.fileId
+          : doc && (doc.fileId != null ? doc.fileId : doc.id);
       const reason =
         opts.reason ||
         ((doc && doc.status === "OBSOLETE") ? "文件废止回收" : "换版回收");
@@ -1894,6 +2678,8 @@ export function createDccSetup() {
           h.status = "RECYCLE_PENDING";
           h.recycleReason = reason;
           if (!h.version || h.version === "-") h.version = version;
+          if (!h.title || h.title === "-") h.title = title;
+          if (fileId != null && (h.fileId == null || h.fileId === "")) h.fileId = fileId;
           n += 1;
         }
       });
@@ -1904,6 +2690,7 @@ export function createDccSetup() {
           id,
           copyNo: `HC-${docNo}-R${String(id).slice(-4)}`,
           docNo,
+          fileId,
           title,
           version,
           status: "RECYCLE_PENDING",
@@ -1918,7 +2705,7 @@ export function createDccSetup() {
       return n;
     };
 
-    /** 修订生效：旧版已替代 + 变更单 + 通知签收人 + 纸质回收（旧版） */
+    /** 修订生效：旧版进入变更单/变更通知/纸质回收（挂旧版 fileId/version） */
     const onReviseActivated = (newDoc, oldDoc) => {
       const today = demoToday();
       if (oldDoc) {
@@ -1926,6 +2713,8 @@ export function createDccSetup() {
         oldDoc.obsoleteDate = today;
       }
       const oldVer = oldDoc ? oldDoc.version : "-";
+      const oldTitle = (oldDoc && oldDoc.title) || newDoc.title;
+      const oldFileId = oldDoc ? (oldDoc.fileId != null ? oldDoc.fileId : oldDoc.id) : null;
       // 变更单回收进度按旧版纸质份统计
       const related = data.hardCopies.filter(
         (h) => h.docNo === newDoc.docNo && (!oldVer || oldVer === "-" || !h.version || String(h.version) === String(oldVer))
@@ -1933,52 +2722,66 @@ export function createDccSetup() {
       const total = Math.max(related.length, 1);
       const changeId = Date.now();
       const changeNo = "ECN" + String(changeId).slice(-10);
-      data.changes.unshift({
-        id: changeId,
-        changeNo,
-        docNo: newDoc.docNo,
-        title: newDoc.title,
-        fromVer: oldVer,
-        toVer: newDoc.version,
-        status: "RECYCLING",
-        recycleProgress: "0/" + total,
-        createdAt: today,
-        fileLevel: newDoc.fileLevel,
-        productType: newDoc.productType,
-        ownerDept: newDoc.ownerDept,
-      });
+      const isRevise = !!(oldVer && oldVer !== "-");
       const msg = `${newDoc.docNo}已更新到${newDoc.version}`;
-      const receivers = new Set();
-      (data.myDocs || []).forEach((m) => {
-        if (m.docNo === newDoc.docNo && m.receiptStatus === "RECEIVED") {
-          (m.forRoles || []).forEach((rc) => {
-            const role = data.demoRoles.find((r) => r.roleCode === rc);
-            if (role) receivers.add(role.name);
-          });
-          if (m.receiptBy) receivers.add(m.receiptBy);
-        }
-      });
-      data.notices.unshift({
-        id: changeId + 1,
-        noticeNo: "NT" + String(changeId).slice(-10),
-        docNo: newDoc.docNo,
-        title: newDoc.title,
-        version: newDoc.version,
-        content: msg,
-        status: "SENT",
-        sentAt: today + " 09:00",
-        urgeCount: 0,
-        receivers: [...receivers].join("、") || "全体已签收人",
-      });
-      // 纸质回收必须挂旧版版本号，不能用新版
-      spawnHardcopyRecycle(oldDoc || newDoc, {
-        docNo: newDoc.docNo,
-        version: oldVer !== "-" ? oldVer : undefined,
-        title: (oldDoc && oldDoc.title) || newDoc.title,
-        reason: "换版回收（旧版 " + (oldVer !== "-" ? oldVer : "原版") + "）",
-      });
-      refreshChangeRecycleProgress(newDoc.docNo);
-      toast(`新版已生效：${msg}；已生成变更单 ${changeNo}，纸质待回收为旧版 ${oldVer}`);
+      // 新建不算变更：仅换版生成变更单与变更通知
+      if (isRevise) {
+        data.changes.unshift({
+          id: changeId,
+          changeNo,
+          docNo: newDoc.docNo,
+          fileId: oldFileId,
+          title: oldTitle,
+          version: oldVer,
+          fromVer: oldVer,
+          toVer: newDoc.version,
+          changeType: "REVISE",
+          status: "RECYCLING",
+          recycleProgress: "0/" + total,
+          createdAt: today,
+          fileLevel: (oldDoc && oldDoc.fileLevel) || newDoc.fileLevel,
+          productType: (oldDoc && oldDoc.productType) || newDoc.productType,
+          ownerDept: (oldDoc && (oldDoc.ownerDept || oldDoc.dept)) || newDoc.ownerDept,
+          changeSummary:
+            (oldDoc && oldDoc.changeSummary) ||
+            newDoc.changeSummary ||
+            `修订升版：旧版 ${oldVer} → 新版 ${newDoc.version}（回收旧版）`,
+          noticeNo: "NT" + String(changeId).slice(-10),
+        });
+        const holders = holdersOfControlledDoc(newDoc.docNo);
+        const notice = {
+          id: changeId + 1,
+          noticeNo: "NT" + String(changeId).slice(-10),
+          docNo: newDoc.docNo,
+          fileId: oldFileId,
+          title: `【换版】${oldTitle} ${oldVer}→${newDoc.version}，请停用旧版`,
+          version: oldVer,
+          fromVer: oldVer,
+          toVer: newDoc.version,
+          noticeType: "REVISE",
+          content: `${newDoc.docNo}《${oldTitle}》换版：请停用旧版 ${oldVer}，启用新版 ${newDoc.version}`,
+          changeSummary: `旧版 ${oldVer} → 新版 ${newDoc.version}`,
+          status: "SENT",
+          sentAt: today + " 09:00",
+          urgeCount: 0,
+          receivers: holders.map((h) => ({ name: h.name, roleCode: h.roleCode || "", read: false })),
+        };
+        syncNoticeReadStats(notice);
+        data.notices.unshift(notice);
+        pushChangeInbox(notice, holders, { at: notice.sentAt });
+        // 纸质回收必须挂旧版版本号/文件ID，不能用新版
+        spawnHardcopyRecycle(oldDoc || newDoc, {
+          docNo: newDoc.docNo,
+          fileId: oldFileId,
+          version: oldVer,
+          title: oldTitle,
+          reason: "换版回收（旧版 " + oldVer + "）",
+        });
+        refreshChangeRecycleProgress(newDoc.docNo);
+        toast(`新版已生效：${msg}；变更单/通知/纸质回收已挂旧版 ${oldVer}`);
+      } else {
+        toast(`新版已生效：${msg}（新建发布不生成变更单/变更通知）`);
+      }
     };
 
     /** 确切生效日格式：YYYY-MM-DD（含合法日历日） */
@@ -2089,6 +2892,8 @@ export function createDccSetup() {
             fileName: apply.fileName || "",
             fileSize: apply.fileSize || 0,
             fileUrl: apply.fileUrl || "",
+            fileType: apply.fileType || "",
+            fileBlob: apply.fileBlob || null,
           };
           data.documents.unshift(doc);
         } else {
@@ -2101,6 +2906,8 @@ export function createDccSetup() {
             doc.fileName = apply.fileName;
             doc.fileSize = apply.fileSize || 0;
             doc.fileUrl = apply.fileUrl || "";
+            doc.fileType = apply.fileType || "";
+            doc.fileBlob = apply.fileBlob || null;
           }
         }
         if (String(planned) <= today) {
@@ -2140,6 +2947,8 @@ export function createDccSetup() {
           fileName: apply.fileName || "",
           fileSize: apply.fileSize || 0,
           fileUrl: apply.fileUrl || "",
+          fileType: apply.fileType || "",
+          fileBlob: apply.fileBlob || null,
         };
         data.documents.unshift(newDoc);
         if (oldDoc && oldDoc.status === "EFFECTIVE") {
@@ -2162,7 +2971,56 @@ export function createDccSetup() {
           doc.dead = true;
           doc.allowDownload = false;
           doc.allowPrint = false;
-          spawnHardcopyRecycle(doc);
+          const obsoleteFileId = doc.fileId != null ? doc.fileId : doc.id;
+          spawnHardcopyRecycle(doc, {
+            docNo: doc.docNo,
+            fileId: obsoleteFileId,
+            version: doc.version,
+            title: doc.title,
+            reason: "文件废止回收",
+          });
+          const changeId = Date.now();
+          const changeNo = "ECN" + String(changeId).slice(-10);
+          const holders = holdersOfControlledDoc(doc.docNo);
+          data.changes.unshift({
+            id: changeId,
+            changeNo,
+            docNo: doc.docNo,
+            fileId: obsoleteFileId,
+            title: doc.title,
+            version: doc.version || "-",
+            fromVer: doc.version || "-",
+            toVer: "-",
+            changeType: "OBSOLETE",
+            status: "NOTIFYING",
+            recycleProgress: "-",
+            createdAt: today,
+            effectiveDate: today,
+            fileLevel: doc.fileLevel,
+            productType: doc.productType,
+            ownerDept: doc.ownerDept || doc.dept,
+            changeSummary: apply.reason || apply.obsoleteReason || "文件废止废弃",
+            noticeNo: "NT" + String(changeId).slice(-10),
+          });
+          const notice = {
+            id: changeId + 1,
+            noticeNo: "NT" + String(changeId).slice(-10),
+            docNo: doc.docNo,
+            fileId: obsoleteFileId,
+            title: `【废弃】${doc.title || doc.docNo} ${doc.version || ""} 已废止，请停用`,
+            version: doc.version,
+            fromVer: doc.version || "-",
+            toVer: "-",
+            noticeType: "OBSOLETE",
+            content: apply.reason || "文件已废弃",
+            status: "SENT",
+            sentAt: today + " 09:00",
+            urgeCount: 0,
+            receivers: holders.map((h) => ({ name: h.name, roleCode: h.roleCode || "", read: false })),
+          };
+          syncNoticeReadStats(notice);
+          data.notices.unshift(notice);
+          pushChangeInbox(notice, holders, { at: notice.sentAt });
         }
         apply.status = "APPROVED";
       }
@@ -2599,6 +3457,8 @@ export function createDccSetup() {
         fileName: "",
         fileSize: 0,
         fileUrl: "",
+        fileType: "",
+        fileBlob: null,
         targetVersion: mode === "CREATE" ? "1.0" : "",
       });
     };
@@ -2636,6 +3496,8 @@ export function createDccSetup() {
         fileName: "",
         fileSize: 0,
         fileUrl: "",
+        fileType: "",
+        fileBlob: null,
         targetVersion: mode === "REVISE" ? nextMajor : "-",
       });
     };
@@ -2781,6 +3643,8 @@ export function createDccSetup() {
         fileName: createForm.fileName || "",
         fileSize: createForm.fileSize || 0,
         fileUrl: createForm.fileUrl || "",
+        fileType: createForm.fileType || "",
+        fileBlob: createForm.fileBlob || null,
       };
       data.applies.unshift(applyRow);
 
@@ -3452,7 +4316,7 @@ export function createDccSetup() {
       navigate("externalReleases");
     };
 
-    const mockDownload = (row, scene) => {
+    const mockDownload = async (row, scene) => {
       const doc = resolveDocMeta(row || currentDoc.value);
       if (!doc || !doc.docNo) return warn("未选择文件");
       if (!assertDocAccessible(doc, "下载")) return;
@@ -3462,8 +4326,7 @@ export function createDccSetup() {
           ElMessage.error("该文件禁止下载，仅可预览");
           return;
         }
-        downloadWatermarkFile(doc, "DOWNLOAD", scene || previewScene.value);
-        toast("已按「我的受控文件」权限下载");
+        await downloadWatermarkFile(doc, "DOWNLOAD", scene || previewScene.value);
         return;
       }
       // 机密：不可本部门直下，须二次申请或下载直授权限
@@ -3476,8 +4339,7 @@ export function createDccSetup() {
       const deptOk = canDeptDirectAccess(doc);
       const permOk = hasPerm("dcc:doc:download");
       if (deptOk || permOk) {
-        downloadWatermarkFile(doc, "DOWNLOAD", scene || previewScene.value);
-        if (deptOk && !permOk) toast("已按「所属部门直授」下载（非密，一/二/三级相同）");
+        await downloadWatermarkFile(doc, "DOWNLOAD", scene || previewScene.value);
         return;
       }
       // 跨部门且无直授：分类禁止下载则仅预览；否则走二次申请
@@ -3513,18 +4375,106 @@ export function createDccSetup() {
     const isWebEditable = (doc) => isLevel3(doc);
 
     const formEditVisible = ref(false);
-    const formEditText = ref("");
     const formEditDoc = ref(null);
+    /** pdf=叠字段；word/excel/ppt=正文内编辑；fields=无附件 */
+    const formEditMode = ref("fields");
+    const formEditWordHtml = ref("");
+    const formEditSheets = ref([]);
+    const formEditSheetIndex = ref(0);
+    const formEditSlides = ref([]);
+    const formEditSlideIndex = ref(0);
+    /** 编辑时保留原文件字节，PPT 写回时 patch 以保留图片 */
+    const formEditSourceBuffer = ref(null);
+    /** 叠在 PDF 上的可填字段（无 Office 正文时） */
+    const formEditFields = reactive({
+      filler: "",
+      fillDate: "",
+      content: "",
+      remark: "",
+    });
+    const formEditSaving = ref(false);
 
-    const openFormEdit = (row) => {
+    const parseFormBodyFields = (raw) => {
+      const empty = {
+        filler: data.user.name || "",
+        fillDate: demoToday(),
+        content: "",
+        remark: "",
+      };
+      if (!raw) return empty;
+      try {
+        const obj = typeof raw === "string" ? JSON.parse(raw) : raw;
+        if (obj && typeof obj === "object" && !Array.isArray(obj)) {
+          return {
+            filler: obj.filler != null ? String(obj.filler) : empty.filler,
+            fillDate: obj.fillDate != null ? String(obj.fillDate) : empty.fillDate,
+            content: obj.content != null ? String(obj.content) : "",
+            remark: obj.remark != null ? String(obj.remark) : "",
+          };
+        }
+      } catch (_) {
+        /* 旧版纯文本正文 → 记入记录内容 */
+      }
+      return { ...empty, content: String(raw) };
+    };
+
+    const openFormEdit = async (row) => {
       const doc = row && row.docNo ? data.documents.find((d) => d.docNo === row.docNo) || row : row;
       if (!doc) return warn("未选择文件");
       if (!isWebEditable(doc)) {
         return warn("仅三级（表单）可在网页直接编辑；一级/二级请走修订申请");
       }
       formEditDoc.value = doc;
-      formEditText.value = doc.formBody || "";
+      Object.assign(formEditFields, parseFormBodyFields(doc.formBody));
+      if (!formEditFields.filler) formEditFields.filler = data.user.name || "";
+      if (!formEditFields.fillDate) formEditFields.fillDate = demoToday();
+      formEditWordHtml.value = "";
+      formEditSheets.value = [];
+      formEditSlides.value = [];
+      formEditSheetIndex.value = 0;
+      formEditSlideIndex.value = 0;
+      formEditSourceBuffer.value = null;
+      const kind = previewFileKind(doc);
+      if (kind === "word" || kind === "excel" || kind === "ppt") {
+        formEditMode.value = kind;
+        formEditVisible.value = true;
+        try {
+          const r = await loadOfficePreview(doc.fileUrl, doc.fileName, doc.fileType);
+          formEditSourceBuffer.value = r.sourceBuffer || null;
+          if (kind === "word") formEditWordHtml.value = r.html || "<p></p>";
+          if (kind === "excel") formEditSheets.value = (r.sheets || []).map((s) => ({ name: s.name, aoa: s.aoa }));
+          if (kind === "ppt")
+            formEditSlides.value = (r.slides || []).map((s) => ({
+              index: s.index,
+              texts: (s.texts || []).slice(),
+              images: (s.images || []).slice(),
+              html: s.html || "",
+              textJoined: (s.texts || []).join("\n"),
+            }));
+        } catch (e) {
+          console.warn("openFormEdit office", e);
+          warn("Office 正文加载失败，已回退字段填写");
+          formEditMode.value = "fields";
+        }
+        return;
+      }
+      formEditMode.value = kind === "pdf" ? "pdf" : "fields";
       formEditVisible.value = true;
+    };
+
+    const addExcelRow = () => {
+      const sheets = formEditSheets.value;
+      const si = formEditSheetIndex.value;
+      if (!sheets[si]) return;
+      const cols = Math.max(1, ...(sheets[si].aoa || []).map((r) => r.length), 3);
+      sheets[si].aoa.push(Array.from({ length: cols }, () => ""));
+    };
+    const addExcelCol = () => {
+      const sheets = formEditSheets.value;
+      const si = formEditSheetIndex.value;
+      if (!sheets[si]) return;
+      (sheets[si].aoa || []).forEach((r) => r.push(""));
+      if (!sheets[si].aoa.length) sheets[si].aoa.push([""]);
     };
 
     const bumpFormRevision = (rev) => {
@@ -3533,7 +4483,80 @@ export function createDccSetup() {
       return "r" + (n + 1);
     };
 
-    const saveFormEdit = () => {
+    /** 将填写内容写入 PDF（叠字保存，生成新 blob） */
+    const stampFormOntoPdf = async (doc, fields) => {
+      if (!doc || !doc.fileUrl || previewFileKind(doc) !== "pdf") return null;
+      const res = await fetch(doc.fileUrl);
+      const bytes = await res.arrayBuffer();
+      const pdfDoc = await PDFDocument.load(bytes);
+      const pages = pdfDoc.getPages();
+      const page = pages[pages.length - 1] || pages[0];
+      if (!page) return null;
+      const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+      const { width } = page.getSize();
+      const lines = [
+        `Filler: ${fields.filler || "-"}`,
+        `Date: ${fields.fillDate || "-"}`,
+        `Content: ${(fields.content || "-").replace(/\s+/g, " ").slice(0, 120)}`,
+        `Remark: ${(fields.remark || "-").replace(/\s+/g, " ").slice(0, 80)}`,
+        `Rev: light-edit · ${data.user.name || ""}`,
+      ];
+      let y = 56;
+      lines.forEach((line) => {
+        page.drawText(line, {
+          x: 36,
+          y,
+          size: 9,
+          font,
+          color: rgb(0.12, 0.12, 0.12),
+          maxWidth: width - 72,
+        });
+        y += 14;
+      });
+      // 页脚浅色水印标记
+      page.drawText(`${data.user.name || ""} ${data.user.userNo || ""} DCC`, {
+        x: 36,
+        y: 28,
+        size: 8,
+        font,
+        color: rgb(0.55, 0.55, 0.55),
+      });
+      const out = await pdfDoc.save();
+      const blob = new Blob([out], { type: "application/pdf" });
+      const prev = doc.fileUrl;
+      if (prev && String(prev).indexOf("blob:") === 0) {
+        try {
+          URL.revokeObjectURL(prev);
+        } catch (_) {
+          /* ignore */
+        }
+      }
+      return URL.createObjectURL(blob);
+    };
+
+    const revokeIfBlob = (url) => {
+      if (url && String(url).indexOf("blob:") === 0) {
+        try {
+          URL.revokeObjectURL(url);
+        } catch (_) {
+          /* ignore */
+        }
+      }
+    };
+
+    const applyEditedBlobToDoc = (doc, blob, fileName, mime) => {
+      revokeIfBlob(doc.fileUrl);
+      doc.fileUrl = URL.createObjectURL(blob);
+      doc.fileType = mime || doc.fileType || "";
+      if (fileName) doc.fileName = fileName;
+      doc.fileSize = blob.size;
+    };
+
+    const syncFormEditWordHtml = (e) => {
+      if (e && e.target) formEditWordHtml.value = e.target.innerHTML || "";
+    };
+
+    const saveFormEdit = async () => {
       const doc = formEditDoc.value;
       if (!doc) return;
       const target = data.documents.find((d) => d.id === doc.id || d.docNo === doc.docNo);
@@ -3541,47 +4564,151 @@ export function createDccSetup() {
         formEditVisible.value = false;
         return warn("未找到文件");
       }
-      const now = new Date().toISOString().slice(0, 16).replace("T", " ");
-      const oldRev = target.formRevision || "r0";
-      const newRev = bumpFormRevision(oldRev);
-      const formalVer = target.version || "1.0";
-      const summary = "三级表单轻量修订（免审批）· " + now;
-
-      target.formBody = formEditText.value;
-      target.formRevision = newRev;
-      // 正式版号不变（T-02-A）；仅更新轻量修订说明
-      target.changeSummary = summary + "（正式版仍为 " + formalVer + "）";
-
-      if (!data.formRevisionHistories) data.formRevisionHistories = {};
-      const hist = data.formRevisionHistories[target.docNo] || [];
-      hist.unshift({
-        rev: newRev,
-        at: now,
-        author: data.user.name,
-        summary,
-        formalVersion: formalVer,
-      });
-      data.formRevisionHistories[target.docNo] = hist;
-
-      [
-        data.myDocs,
-        data.applies,
-        data.distributions,
-        data.hardCopies,
-        data.trainingTasks,
-        data.recentEffective,
-      ].forEach((list) => {
-        (list || []).forEach((row) => {
-          if (row.docNo === target.docNo) row.formRevision = newRev;
-        });
-      });
-
-      if (currentDoc.value && currentDoc.value.docNo === target.docNo) {
-        currentDoc.value = target;
+      const mode = formEditMode.value || "fields";
+      const isOffice = mode === "word" || mode === "excel" || mode === "ppt";
+      if (!isOffice && !String(formEditFields.content || "").trim()) {
+        return warn("请填写「记录内容」后再保存");
       }
+      formEditSaving.value = true;
+      try {
+        const now = new Date().toISOString().slice(0, 16).replace("T", " ");
+        const oldRev = target.formRevision || "r0";
+        const newRev = bumpFormRevision(oldRev);
+        const formalVer = target.version || "1.0";
+        let writeHint = "";
+        let summary = "三级表单轻量修订（免审批）· " + now;
 
-      formEditVisible.value = false;
-      toast("已保存轻量修订 " + oldRev + " → " + newRev + "（正式版 " + formalVer + " 未变，无需审批）");
+        if (mode === "word") {
+          summary = "三级表单轻量修订（Word 正文编辑·免审批）· " + now;
+          const blob = await buildWordBlobFromHtml(formEditWordHtml.value || "<p></p>");
+          const base = String(target.fileName || "form.docx").replace(/\.[^.]+$/, "");
+          applyEditedBlobToDoc(
+            target,
+            blob,
+            base + ".docx",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+          );
+          writeHint = "已写回 Word";
+          if (!String(formEditFields.content || "").trim()) {
+            formEditFields.content = "Word 正文已编辑保存";
+          }
+        } else if (mode === "excel") {
+          summary = "三级表单轻量修订（Excel 表格编辑·免审批）· " + now;
+          const blob = buildExcelBlob(formEditSheets.value || []);
+          const base = String(target.fileName || "form.xlsx").replace(/\.[^.]+$/, "");
+          applyEditedBlobToDoc(
+            target,
+            blob,
+            base + ".xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+          );
+          writeHint = "已写回 Excel";
+          if (!String(formEditFields.content || "").trim()) {
+            formEditFields.content = "Excel 表格已编辑保存";
+          }
+        } else if (mode === "ppt") {
+          summary = "三级表单轻量修订（PPT 文本编辑·免审批）· " + now;
+          const slides = (formEditSlides.value || []).map((s, i) => ({
+            index: s.index || i + 1,
+            textJoined: s.textJoined != null ? String(s.textJoined) : (s.texts || []).join("\n"),
+            texts: String(s.textJoined != null ? s.textJoined : (s.texts || []).join("\n"))
+              .split(/\r?\n/)
+              .map((t) => t.trim())
+              .filter(Boolean),
+          }));
+          let blob;
+          if (formEditSourceBuffer.value) {
+            blob = await patchPptxTexts(formEditSourceBuffer.value, slides);
+          } else {
+            const buf = await fetchArrayBuffer(target.fileUrl);
+            blob = await patchPptxTexts(buf, slides);
+          }
+          const base = String(target.fileName || "form.pptx").replace(/\.[^.]+$/, "");
+          applyEditedBlobToDoc(
+            target,
+            blob,
+            base + ".pptx",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+          );
+          writeHint = "已写回 PPT（保留原图）";
+          if (!String(formEditFields.content || "").trim()) {
+            formEditFields.content = "PPT 文本已编辑保存";
+          }
+        } else if (mode === "pdf" && target.fileUrl) {
+          summary = "三级表单轻量修订（PDF上填写·免审批）· " + now;
+        }
+
+        const bodyObj = {
+          filler: formEditFields.filler || "",
+          fillDate: formEditFields.fillDate || "",
+          content: formEditFields.content || "",
+          remark: formEditFields.remark || "",
+          editMode: mode,
+        };
+        target.formBody = JSON.stringify(bodyObj);
+        target.formRevision = newRev;
+        target.changeSummary = summary + "（正式版仍为 " + formalVer + "）";
+
+        if (mode === "pdf" && target.fileUrl) {
+          try {
+            const newUrl = await stampFormOntoPdf(target, bodyObj);
+            if (newUrl) {
+              target.fileUrl = newUrl;
+              target.fileType = "application/pdf";
+              writeHint = "已写入 PDF";
+            }
+          } catch (e) {
+            console.warn("stampFormOntoPdf", e);
+            warn("PDF 写入失败，已保存填写数据；可重新打开编辑重试");
+          }
+        }
+
+        if (!data.formRevisionHistories) data.formRevisionHistories = {};
+        const hist = data.formRevisionHistories[target.docNo] || [];
+        hist.unshift({
+          rev: newRev,
+          at: now,
+          author: data.user.name,
+          summary,
+          formalVersion: formalVer,
+        });
+        data.formRevisionHistories[target.docNo] = hist;
+
+        [
+          data.myDocs,
+          data.applies,
+          data.distributions,
+          data.hardCopies,
+          data.trainingTasks,
+          data.recentEffective,
+        ].forEach((list) => {
+          (list || []).forEach((row) => {
+            if (row.docNo === target.docNo) row.formRevision = newRev;
+          });
+        });
+
+        if (currentDoc.value && currentDoc.value.docNo === target.docNo) {
+          currentDoc.value = target;
+        }
+        formEditDoc.value = target;
+        formEditVisible.value = false;
+        toast(
+          "已保存轻量修订 " +
+            oldRev +
+            " → " +
+            newRev +
+            "（正式版 " +
+            formalVer +
+            " 未变" +
+            (writeHint ? "；" + writeHint : "") +
+            "）"
+        );
+      } catch (e) {
+        console.warn("saveFormEdit", e);
+        warn((e && e.message) || "保存失败");
+      } finally {
+        formEditSaving.value = false;
+      }
     };
 
     const downloadTrainingCert = (row) => {
@@ -4280,14 +5407,14 @@ h1{text-align:center}
       hardPrintVisible.value = true;
     };
 
-    const confirmPrint = () => {
+    const confirmPrint = async () => {
       const doc = currentDoc.value || data.documents[0];
       if (!doc) {
         warn("未选择文件");
         return;
       }
       hardPrintVisible.value = false;
-      const copyNo = downloadWatermarkFile(doc, "PRINT", previewScene.value);
+      const copyNo = await downloadWatermarkFile(doc, "PRINT", previewScene.value);
       if (doc && copyNo) {
         data.hardCopies.unshift({
           id: Date.now(),
@@ -4295,10 +5422,11 @@ h1{text-align:center}
           docNo: doc.docNo,
           title: doc.title,
           version: doc.version,
+          fileId: doc.fileId != null ? doc.fileId : doc.id,
           holder: printForm.holder || data.user.name,
           location: printForm.location || "现场墙柜",
           status: "IN_USE",
-          printedAt: "2026-07-22",
+          printedAt: demoToday(),
           printedBy: data.user.name,
         });
         data.stats.hardRecycle = data.hardCopies.filter((x) => x.status === "RECYCLE_PENDING").length;
@@ -4392,6 +5520,8 @@ h1{text-align:center}
         fileName: "",
         fileSize: 0,
         fileUrl: "",
+        fileType: "",
+        fileBlob: null,
       });
       extDocDrawer.value = true;
     };
@@ -4424,6 +5554,8 @@ h1{text-align:center}
         fileName: extForm.fileName,
         fileSize: extForm.fileSize || 0,
         fileUrl: extForm.fileUrl || "",
+        fileType: extForm.fileType || "",
+        fileBlob: extForm.fileBlob || null,
       };
       data.externalDocs.unshift(row);
       extDocDrawer.value = false;
@@ -4473,6 +5605,17 @@ h1{text-align:center}
       roleDistributions,
       roleNotices,
       roleChanges,
+      roleChangeInbox,
+      roleChangeInboxUnread,
+      markChangeInboxRead,
+      noticeReadText,
+      changeKindOptions,
+      changeFilters,
+      noticeFilters,
+      filteredChanges,
+      filteredNotices,
+      resetChangeFilters,
+      resetNoticeFilters,
       roleBorrows,
       roleExternals,
       roleRecordChanges,
@@ -4509,6 +5652,10 @@ h1{text-align:center}
       onExternalDocChange,
       submitDistribution,
       pickUploadFile,
+      previewFileKind,
+      officePreview,
+      ensureOfficePreview,
+      openUploadedFile,
       pickExtDocFile,
       formatFileSize,
       hasPerm,
@@ -4595,10 +5742,20 @@ h1{text-align:center}
       isLevel3,
       isWebEditable,
       formEditVisible,
-      formEditText,
+      formEditMode,
+      formEditFields,
+      formEditWordHtml,
+      formEditSheets,
+      formEditSheetIndex,
+      formEditSlides,
+      formEditSlideIndex,
+      formEditSaving,
       formEditDoc,
       openFormEdit,
       saveFormEdit,
+      syncFormEditWordHtml,
+      addExcelRow,
+      addExcelCol,
       ownerDeptFileRows,
       countDocsByOwnerDept,
       securityOptions,
@@ -4619,6 +5776,7 @@ h1{text-align:center}
       fileIdOf,
       docMeta,
       ownerDeptOf,
+      changeSummaryOf,
       nextFileId,
       csvSplit,
       csvJoin,
@@ -4627,6 +5785,9 @@ h1{text-align:center}
       formRevisionRows,
       productTypeFileRows,
       statusTag,
+      todoBizTag,
+      noticeTypeTag,
+      changeTypeTag,
       badgeCount,
       navigate,
       closeTab,

@@ -45,6 +45,14 @@ export default defineComponent({
         <el-table-column label="文件名称" min-width="160">
           <template #default="{ row }">{{ row.title || "-" }}<span v-if="isSecret(row)" class="sec-mi" title="机密">密</span></template>
         </el-table-column>
+        <el-table-column label="变更类型" width="90" align="center">
+          <template #default="{ row }">
+            <span class="tag" :class="changeTypeTag(row).cls">{{ changeTypeTag(row).text }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="变更内容" min-width="220" show-overflow-tooltip>
+          <template #default="{ row }">{{ changeSummaryOf(row) }}</template>
+        </el-table-column>
         <el-table-column label="文件级别" width="150"><template #default="{ row }">{{ levelName(row.fileLevel) }}</template></el-table-column>
         <el-table-column label="业务领域" min-width="160"><template #default="{ row }">{{ ptName(row.productType) }}</template></el-table-column>
         <el-table-column label="状态" width="90">
