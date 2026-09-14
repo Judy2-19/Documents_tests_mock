@@ -1,4 +1,4 @@
-# 米格实验室 · DCC 文控系统
+# DCC 文控系统
 
 受控文件全生命周期管理系统（方案 A：嵌入米格现有后台 / 若依）。可点测前端在 **`web/`**（Vite + Vue 3.5 + TS + Vue Router）；正式开发挂现网菜单，后端 **JDK 17 + Spring Boot 3.4 + MyBatis Plus + MySQL + Redis**，表前缀 `dcc_`。
 
